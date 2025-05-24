@@ -10,7 +10,7 @@ import tempfile
 import logging
 import math
 from collections import defaultdict
-import time  # Pour le système de blocage
+import time
 from datetime import datetime
 from typing import Any, Dict
 import threading
@@ -41,6 +41,7 @@ intents.guilds = True
 intents.messages = True
 intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 _guild_gpt_prompt = defaultdict(lambda: DEFAULT_GPT_PROMPT)
 _guild_sayvc_instructions = defaultdict(lambda: DEFAULT_SAYVC_INSTRUCTIONS)
 _guild_gpt_prompt_reset_task = {}
@@ -49,16 +50,18 @@ reddit_jokes_by_sub = defaultdict(list)
 _voice_audio_queues = defaultdict(asyncio.Queue)
 _voice_locks = defaultdict(asyncio.Lock)
 _vc_blocks = defaultdict(dict)  # (guild_id, channel_id): {user_id: until_ts}
+
 # ----- Historique commandes -----
 HISTORY_FILE = "/app/data/command_history.json"
 _history_lock = threading.Lock()
-def log_command(user: discord.User, command_name: str, options: Dict[str, Any]):
+def log_command(user: discord.User, command_name: str, options: Dict[str, Any], guild: discord.Guild = None):
     entry = {
         "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
         "user_id": user.id,
         "user": str(user),
         "command": command_name,
-        "params": options
+        "params": options,
+        "guild_id": guild.id if guild else None
     }
     with _history_lock:
         try:
@@ -75,6 +78,7 @@ def log_command(user: discord.User, command_name: str, options: Dict[str, Any]):
                 json.dump(history, out, ensure_ascii=False, indent=2)
         except Exception as e:
             logging.error(f"Error writing command history: {e}")
+
 def get_recent_history(n=15):
     with _history_lock:
         try:
@@ -87,14 +91,15 @@ def get_recent_history(n=15):
             return []
     return items[-n:] if len(items) > n else items
 # ----- Fin historique -----
+
 def is_vc_blocked_for_user(guild_id, channel_id, user_list):
-    """Return list of users in user_list that block this VC (clean expired first)."""
     now = time.time()
     blocks = _vc_blocks[(guild_id, channel_id)]
     expired = [uid for uid, until in blocks.items() if until < now]
     for uid in expired:
         del blocks[uid]
     return list(set(blocks.keys()) & set(user_list))
+
 def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     if interaction.user.voice and interaction.user.voice.channel:
         return interaction.user.voice.channel
@@ -103,6 +108,7 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
         if perms.connect and perms.speak:
             return specified
     return None
+
 async def fetch_reddit_top(subreddit, headers, max_posts=1000):
     url = f"https://www.reddit.com/r/{subreddit}/top.json?t=year&limit=1000"
     loop = asyncio.get_event_loop()
@@ -124,6 +130,7 @@ async def fetch_reddit_top(subreddit, headers, max_posts=1000):
                 break
         return posts[:max_posts]
     return await loop.run_in_executor(None, fetch)
+
 async def load_reddit_jokes():
     logging.info("Loading Reddit jokes...")
     unique = defaultdict(list)
@@ -139,6 +146,7 @@ async def load_reddit_jokes():
                 seen.add(k)
     logging.info(f"Loaded {sum(len(x) for x in unique.values())} jokes unique from Reddit.")
     return unique
+
 def run_tts(joke_text, filename, voice, instructions):
     try:
         resp = requests.post(
@@ -166,6 +174,7 @@ def run_tts(joke_text, filename, voice, instructions):
     except Exception as ex:
         logging.error(f"TTS network error: {ex}")
         return False
+
 def run_gpt(query, system_prompt):
     try:
         resp = requests.post(
@@ -191,12 +200,12 @@ def run_gpt(query, system_prompt):
     except Exception as ex:
         logging.error(f"GPT network error: {ex}")
         return "Erreur : impossible de contacter Azure OpenAI."
+
 async def play_audio(interaction, file_path, voice_channel):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
     gid = guild.id if guild else 0
-    # LOGIQUE DE BLOCAGE
     channel_id = voice_channel.id
     members_in_channel = [m.id for m in voice_channel.members if not m.bot]
     blockers = is_vc_blocked_for_user(gid, channel_id, members_in_channel)
@@ -210,6 +219,7 @@ async def play_audio(interaction, file_path, voice_channel):
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock))
     await fut
+
 async def _run_audio_queue(guild, queue, lock):
     async with lock:
         while not queue.empty():
@@ -233,6 +243,7 @@ async def _run_audio_queue(guild, queue, lock):
                         os.remove(file_path)
                 except Exception as ex:
                     logging.warning(f"Erreur suppression fichier temp: {ex}")
+
 async def _delayed_reset_gpt(gid):
     await asyncio.sleep(24 * 3600)
     _guild_gpt_prompt[gid] = DEFAULT_GPT_PROMPT
@@ -241,9 +252,11 @@ async def _delayed_reset_sayvc(gid):
     await asyncio.sleep(24 * 3600)
     _guild_sayvc_instructions[gid] = DEFAULT_SAYVC_INSTRUCTIONS
     _guild_sayvc_reset_task[gid] = None
+
 def _cancel_task(task):
     if task and not task.done():
         task.cancel()
+
 @bot.event
 async def on_ready():
     logging.info(f"Bot logged in as {bot.user}!")
@@ -255,18 +268,21 @@ async def on_ready():
         print(e)
     await bot.change_presence(activity=discord.Game(name="Tape /help"))
     preload_jokes_task.start()
+
 @tasks.loop(count=1)
 async def preload_jokes_task():
     global reddit_jokes_by_sub
     await asyncio.sleep(2)
     reddit_jokes_by_sub = await load_reddit_jokes()
+
 @bot.tree.command(name="ping", description="Renvoie Pong !")
 async def ping(interaction: discord.Interaction):
-    log_command(interaction.user, "ping", {})
+    log_command(interaction.user, "ping", {}, guild=interaction.guild)
     await interaction.response.send_message("Pong !", ephemeral=True)
+
 @bot.tree.command(name="bloque", description="Bloque le bot pour 2h de rejoindre ton vocal actuel")
 async def bloque(interaction: discord.Interaction):
-    log_command(interaction.user, "bloque", {})
+    log_command(interaction.user, "bloque", {}, guild=interaction.guild)
     user = interaction.user
     if not user.voice or not user.voice.channel:
         await interaction.response.send_message(
@@ -279,9 +295,10 @@ async def bloque(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"🔒 Le bot ne peux rejoindre **{channel.name}** pour toi pendant 2h. Refais `/bloque` pour prolonger.",
         ephemeral=True)
+
 @bot.tree.command(name="debloque", description="Enlève ton blocage dans le salon vocal")
 async def debloque(interaction: discord.Interaction):
-    log_command(interaction.user, "debloque", {})
+    log_command(interaction.user, "debloque", {}, guild=interaction.guild)
     user = interaction.user
     if not user.voice or not user.voice.channel:
         await interaction.response.send_message(
@@ -297,12 +314,14 @@ async def debloque(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(
             f"Ce salon n’était pas bloqué par toi !", ephemeral=True)
+
 @bot.tree.command(name="jokeqc", description="Blague québécoise mp3")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def jokeqc(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
     log_command(
         interaction.user, "jokeqc",
-        {"voice_channel": str(voice_channel) if voice_channel else None}
+        {"voice_channel": str(voice_channel) if voice_channel else None},
+        guild=interaction.guild
     )
     await interaction.response.defer(thinking=True, ephemeral=True)
     file = random.choice(audio_files)
@@ -321,12 +340,14 @@ async def jokeqc(interaction: discord.Interaction, voice_channel: discord.VoiceC
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
+
 @bot.tree.command(name="joke", description="Blague Reddit en vocal")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def joke(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
     log_command(
         interaction.user, "joke",
-        {"voice_channel": str(voice_channel) if voice_channel else None}
+        {"voice_channel": str(voice_channel) if voice_channel else None},
+        guild=interaction.guild
     )
     await interaction.response.defer(thinking=True, ephemeral=True)
     global reddit_jokes_by_sub
@@ -365,9 +386,10 @@ async def joke(interaction: discord.Interaction, voice_channel: discord.VoiceCha
     finally:
         try: os.remove(filename)
         except: pass
+
 @bot.tree.command(name="leave", description="Quitte le vocal")
 async def leave(interaction: discord.Interaction):
-    log_command(interaction.user, "leave", {})
+    log_command(interaction.user, "leave", {}, guild=interaction.guild)
     await interaction.response.defer(thinking=True, ephemeral=True)
     vc = discord.utils.get(bot.voice_clients, guild=interaction.guild)
     if vc:
@@ -378,12 +400,14 @@ async def leave(interaction: discord.Interaction):
             await interaction.followup.send("Je quitte le salon vocal.", ephemeral=True)
     else:
         await interaction.followup.send("Le bot n'est pas connecté au vocal.", ephemeral=True)
+
 @bot.tree.command(name="penis", description="Joue un son spécial !")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def penis(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
     log_command(
         interaction.user, "penis",
-        {"voice_channel": str(voice_channel) if voice_channel else None}
+        {"voice_channel": str(voice_channel) if voice_channel else None},
+        guild=interaction.guild
     )
     await interaction.response.defer(thinking=True, ephemeral=True)
     file = os.path.join(AUDIO_DIR, "sort-pas-ton-penis.mp3")
@@ -403,14 +427,17 @@ async def penis(interaction: discord.Interaction, voice_channel: discord.VoiceCh
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
+
 @bot.tree.command(name="say-tc", description="Affiche le texte dans le salon texte")
 @app_commands.describe(message="Texte à afficher")
 async def say_tc(interaction: discord.Interaction, message: str):
     log_command(
         interaction.user, "say_tc",
-        {"message": message}
+        {"message": message},
+        guild=interaction.guild
     )
     await interaction.response.send_message(message)
+
 async def say_with_tts(interaction, message, voice, instructions, voice_channel):
     if not voice_channel:
         await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
@@ -434,6 +461,7 @@ async def say_with_tts(interaction, message, voice, instructions, voice_channel)
     finally:
         try: os.remove(filename)
         except: pass
+
 @bot.tree.command(
     name="say-vc",
     description="Lecture TTS en vocal"
@@ -458,7 +486,8 @@ async def say_vc(
             "instructions": instructions,
             "sauvegarder_instructions": sauvegarder_instructions,
             "voice_channel": str(voice_channel) if voice_channel else None
-        }
+        },
+        guild=interaction.guild
     )
     gid = interaction.guild.id if interaction.guild else None
     await interaction.response.defer(thinking=True, ephemeral=True)
@@ -477,6 +506,7 @@ async def say_vc(
     await say_with_tts(interaction, message, "ash", current_instructions, vc_channel)
     if info:
         await interaction.followup.send(info, ephemeral=True)
+
 @bot.tree.command(
     name="gpt",
     description="Pose une question à GPT-4o puis lit la réponse"
@@ -501,7 +531,8 @@ async def gpt(
             "lecture_vocale": lecture_vocale,
             "prompt": prompt,
             "sauvegarder_prompt": sauvegarder_prompt
-        }
+        },
+        guild=interaction.guild
     )
     gid = interaction.guild.id if interaction.guild else None
     if prompt is not None and sauvegarder_prompt:
@@ -557,6 +588,7 @@ async def gpt(
             try: os.remove(filename)
             except: pass
         await interaction.followup.send("Réponse lue dans le salon vocal.")
+
 @bot.tree.command(
     name="roast",
     description="Roast drôle et custom (1 à 5)"
@@ -581,7 +613,8 @@ async def roast(
             "intensite": intensite,
             "details": details,
             "voice_channel": str(voice_channel) if voice_channel else None
-        }
+        },
+        guild=interaction.guild
     )
     intensite = max(1, min(5, intensite))
     noms_intensite = {
@@ -641,6 +674,7 @@ async def roast(
         await interaction.followup.send("Roast balancé au vocal!", ephemeral=True)
     else:
         await interaction.followup.send("(Rejoins ou précise un salon vocal !)", ephemeral=True)
+
 @bot.tree.command(
     name="compliment",
     description="Compliment personnalisé (fun)"
@@ -662,7 +696,8 @@ async def compliment(
             "cible": cible.display_name if hasattr(cible, "display_name") else str(cible),
             "details": details,
             "voice_channel": str(voice_channel) if voice_channel else None
-        }
+        },
+        guild=interaction.guild
     )
     username = cible.display_name if hasattr(cible, "display_name") else str(cible)
     ajout_details = f" Met en valeur : {details}" if details else ""
@@ -707,9 +742,10 @@ async def compliment(
         await interaction.followup.send("Compliment lancé au vocal!", ephemeral=True)
     else:
         await interaction.followup.send("(Rejoins ou précise un salon vocal !)", ephemeral=True)
+
 @bot.tree.command(name="help", description="Commandes du bot")
 async def help(interaction: discord.Interaction):
-    log_command(interaction.user, "help", {})
+    log_command(interaction.user, "help", {}, guild=interaction.guild)
     embed = discord.Embed(
         title="Aide - Commandes du bot",
         color=0x00bcff,
@@ -781,9 +817,10 @@ async def help(interaction: discord.Interaction):
     )
     embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.command(name="reset-prompts", description="Reset prompts et TTS")
 async def reset_prompts(interaction: discord.Interaction):
-    log_command(interaction.user, "reset_prompts", {})
+    log_command(interaction.user, "reset_prompts", {}, guild=interaction.guild)
     await interaction.response.defer(thinking=True, ephemeral=True)
     gid = interaction.guild.id if interaction.guild else None
     _guild_gpt_prompt[gid] = DEFAULT_GPT_PROMPT
@@ -797,20 +834,25 @@ async def reset_prompts(interaction: discord.Interaction):
         ephemeral=True
     )
     logging.info(f"[{gid}] All prompts/instructions reset by {interaction.user}.")
-# ======== Commande historique ========
+
 @bot.tree.command(name="history", description="Afficher tes 15 dernières commandes du bot (éphémère)")
 async def history(interaction: discord.Interaction):
-    log_command(interaction.user, "history", {})
+    log_command(interaction.user, "history", {}, guild=interaction.guild)
     await interaction.response.defer(thinking=True, ephemeral=True)
-    items = get_recent_history(15)
+    gid = interaction.guild.id if interaction.guild else None
+    if gid is None:
+        await interaction.followup.send("Cette commande doit être utilisée dans un serveur.", ephemeral=True)
+        return
+    all_items = get_recent_history(1000)
+    items = [e for e in reversed(all_items) if e.get("guild_id") == gid]
     if not items:
-        await interaction.followup.send("Aucun historique de commandes trouvé.", ephemeral=True)
+        await interaction.followup.send("Aucune commande récente sur ce serveur.", ephemeral=True)
         return
     embed = discord.Embed(
-        title=f"15 dernières commandes (tous users)",
+        title=f"15 dernières commandes sur ce serveur",
         color=0xcccccc
     )
-    for entry in items:
+    for entry in items[:15]:
         t = entry["timestamp"]
         user = entry["user"]
         cmd = entry["command"]
@@ -819,12 +861,13 @@ async def history(interaction: discord.Interaction):
         txt = f"`{t}` - **{user}** : /{cmd} {ptxt}"
         embed.add_field(name="\u200b", value=txt[:1000], inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
-# ======== Fin historique =============
+
 @bot.event
 async def on_app_command_error(interaction, error):
     try: await interaction.response.send_message(f"Erreur commande : {error}", ephemeral=True)
     except: await interaction.followup.send(f"Erreur commande : {error}", ephemeral=True)
     logging.error(f"Unhandled app command error: {error}")
+
 if __name__ == "__main__":
     print("Starting bot... Jokes will fetch in background.")
     logging.info("Bot starting up. Jokes will fetch in background.")
