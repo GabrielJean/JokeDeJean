@@ -35,7 +35,7 @@ audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")]
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()]
+    handlers=[logging.FileHandler("/app/data/bot.log"), logging.StreamHandler()]
 )
 
 intents = discord.Intents.default()
@@ -56,7 +56,7 @@ _voice_locks = defaultdict(asyncio.Lock)
 _vc_blocks = defaultdict(dict)  # (guild_id, channel_id): {user_id: until_ts}
 
 # ----- Historique commandes -----
-HISTORY_FILE = "command_history.json"
+HISTORY_FILE = "/app/data/command_history.json"
 _history_lock = threading.Lock()
 
 def log_command(user: discord.User, command_name: str, options: Dict[str, Any]):
