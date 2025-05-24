@@ -40,4 +40,3 @@ jobs:
           push: true
           tags: |
             gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
-            gitea.docker-1.gwebs.ca/gabriel/jokedejean:${{ github.sha }}
