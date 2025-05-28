@@ -460,22 +460,21 @@ async def say_with_tts(interaction, message, voice, instructions, voice_channel)
         await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
         return
     else:
-        await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
-        # ----------- ENVOI EN EMBED ------------
+        # ----------- ENVOI PUBLIC EN EMBED ------------
         if hasattr(interaction.channel, "send"):
             try:
                 embed = discord.Embed(
                     title="💬 Texte prononcé en vocal",
                     description=message,
-                    color=0x00bcff
+                    color=0x00bcff,
                 )
                 if instructions:
                     embed.add_field(name="Style", value=instructions, inline=False)
                 embed.set_footer(text=f"Demandé par {interaction.user.display_name}")
-                await interaction.channel.send(embed=embed)
+                await interaction.channel.send(embed=embed)  # <-- PUBLIC, PAS ÉPHÉMÈRE
             except Exception as e:
                 logging.warning(f"Impossible d'envoyer l'embed TTS dans le salon texte: {e}")
-        # ---------------------------------------
+        # -----------------------------------------------
     finally:
         try:
             os.remove(filename)
