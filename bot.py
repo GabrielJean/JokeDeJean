@@ -450,18 +450,37 @@ async def say_with_tts(interaction, message, voice, instructions, voice_channel)
             loop.run_in_executor(None, run_tts, message, filename, voice, instructions),
             timeout=20
         )
-        if not success: raise Exception("Erreur lors de la génération de la synthèse vocale.")
+        if not success:
+            raise Exception("Erreur lors de la génération de la synthèse vocale.")
         await asyncio.wait_for(play_audio(interaction, filename, voice_channel), timeout=30)
     except RuntimeError as exc:
         await interaction.followup.send(str(exc), ephemeral=True)
+        return
     except Exception as exc:
         await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
+        return
     else:
         await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
+        # ----------- ENVOI EN EMBED ------------
+        if hasattr(interaction.channel, "send"):
+            try:
+                embed = discord.Embed(
+                    title="💬 Texte prononcé en vocal",
+                    description=message,
+                    color=0x00bcff
+                )
+                if instructions:
+                    embed.add_field(name="Style", value=instructions, inline=False)
+                embed.set_footer(text=f"Demandé par {interaction.user.display_name}")
+                await interaction.channel.send(embed=embed)
+            except Exception as e:
+                logging.warning(f"Impossible d'envoyer l'embed TTS dans le salon texte: {e}")
+        # ---------------------------------------
     finally:
-        try: os.remove(filename)
-        except: pass
-
+        try:
+            os.remove(filename)
+        except Exception:
+            pass
 @bot.tree.command(
     name="say-vc",
     description="Lecture TTS en vocal"
