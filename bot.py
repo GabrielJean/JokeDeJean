@@ -31,17 +31,20 @@ DEFAULT_SAYVC_INSTRUCTIONS = config.get(
     "Utilise un accent québécois"
 )
 audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.FileHandler("/app/data/bot.log"), logging.StreamHandler()]
 )
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.messages = True
 intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 _guild_gpt_prompt = defaultdict(lambda: DEFAULT_GPT_PROMPT)
 _guild_sayvc_instructions = defaultdict(lambda: DEFAULT_SAYVC_INSTRUCTIONS)
 _guild_gpt_prompt_reset_task = {}
@@ -54,8 +57,6 @@ _vc_blocks = defaultdict(dict)  # (guild_id, channel_id): {user_id: until_ts}
 # ----- Historique commandes -----
 HISTORY_FILE = "/app/data/command_history.json"
 _history_lock = threading.Lock()
-
-
 def log_command(user: discord.User, command_name: str, options: Dict[str, Any], guild: discord.Guild = None):
     entry = {
         "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
@@ -236,9 +237,11 @@ async def _run_audio_queue(guild, queue, lock):
                 while vc.is_playing():
                     await asyncio.sleep(1)
                 await vc.disconnect()
+                # PATCHED: check fut.done()
                 if not fut.done():
                     fut.set_result(None)
             except Exception as e:
+                # PATCHED: check fut.done()
                 if not fut.done():
                     fut.set_exception(e)
             finally:
@@ -443,6 +446,62 @@ async def say_tc(interaction: discord.Interaction, message: str):
     )
     await interaction.response.send_message(message)
 
+
+# ================= PROTECTION EMBED TROP LOURD SAY-VC ===============
+
+def build_safely_embed_for_sayvc(message, current_instructions, display_name):
+    # Discord : embed max 6000, chaque champ max 1024, max 25 champs, titre 256, footer 2048, etc.
+    # On préfère splitter sur 950 pour garder une marge.
+    max_overall = 6000
+    max_title = 256
+    max_footer = 2048
+    max_field = 1024
+    max_fields = 25
+
+    cuts = []  # texte splitté
+    to_split = message or ""
+    while to_split:
+        cuts.append(to_split[:950])
+        to_split = to_split[950:]
+
+    # On "ajuste" les fields max et total
+    fields = []
+    total_chars = 0
+
+    for idx, part in enumerate(cuts[:max_fields]):
+        label = "Message" if idx == 0 else f"…suite {idx}"
+        value = part
+        if len(value) > max_field:
+            value = value[:max_field - 3] + "..."
+        fields.append((label, value))
+        total_chars += len(label) + len(value)
+        if total_chars > max_overall:
+            break
+
+    embed = discord.Embed(
+        title="💬 Texte prononcé en vocal"[:max_title],
+        color=0x00bcff,
+    )
+    desc = None
+    # Si le message entier rentre, mets-le en description
+    if len(message) <= 950 and (len(message) + len(embed.title)) < (max_overall - 128):
+        desc = message
+        embed.description = desc
+
+    # Ajoute les fields split s'il faut
+    for label, value in fields:
+        embed.add_field(name=label, value=value, inline=False)
+    cut_total = sum(len(x[1]) for x in fields)
+    if cut_total < len(message):
+        embed.add_field(name="…", value="(Texte coupé : trop long pour Discord embed !)", inline=False)
+    if current_instructions:
+        val = current_instructions if len(current_instructions) < max_field else (current_instructions[:max_field-3] + "...")
+        embed.add_field(name="Style", value=val, inline=False)
+    embed.set_footer(text=f"Demandé par {display_name}"[:max_footer])
+    return embed
+
+# ================= FIN PATCH EMBEDS ===============
+
 # ---------- /say-vc corrigée ici -------------
 @bot.tree.command(
     name="say-vc",
@@ -497,14 +556,8 @@ async def say_vc(
             return
         await asyncio.wait_for(play_audio(interaction, filename, vc_channel), timeout=30)
         # ----------- ENVOI EN PUBLIC VIA FOLLOWUP ----------
-        embed = discord.Embed(
-            title="💬 Texte prononcé en vocal",
-            description=message,
-            color=0x00bcff,
-        )
-        if current_instructions:
-            embed.add_field(name="Style", value=current_instructions, inline=False)
-        embed.set_footer(text=f"Demandé par {interaction.user.display_name}")
+        # PATCHED: safe embed
+        embed = build_safely_embed_for_sayvc(message, current_instructions, interaction.user.display_name)
         await interaction.followup.send(embed=embed, ephemeral=False)
     except RuntimeError as exc:
         await interaction.followup.send(str(exc), ephemeral=True)
@@ -564,14 +617,35 @@ async def gpt(
     except Exception as ex:
         await interaction.followup.send(f"Erreur GPT : {ex}", ephemeral=True)
         return
-    embed = discord.Embed(title="Réponse GPT-4o", color=0x00bcff, description=f"**Q :** {query}")
-    maxlen = 1024
-    chunks = [reply[i:i+maxlen] for i in range(0, len(reply), maxlen)]
-    for idx, chunk in enumerate(chunks[:25]):
-        name = "Réponse" if idx == 0 else f"(suite {idx})"
-        embed.add_field(name=name, value=chunk, inline=False)
-    if len(chunks) > 25:
-        embed.add_field(name="Info", value="(réponse tronquée, trop longue !)", inline=False)
+
+    # PATCHED: safe embed pour reply
+    def build_gpt_embed(query, reply, interaction):
+        max_overall = 6000
+        max_chunk = 950
+        max_field = 1024
+        max_fields = 25
+        max_title = 256
+        max_footer = 2048
+        # Split reply
+        reply_cuts = []
+        to_split = reply or ""
+        while to_split:
+            reply_cuts.append(to_split[:max_chunk])
+            to_split = to_split[max_chunk:]
+        embed = discord.Embed(title="Réponse GPT-4o"[:max_title], color=0x00bcff, description=f"**Q :** {query[:800]}")
+        total_chars = len(embed.title or "") + len(embed.description or "")
+        for idx, chunk in enumerate(reply_cuts[:max_fields]):
+            name = "Réponse" if idx == 0 else f"(suite {idx})"
+            field_val = chunk if len(chunk) < max_field else (chunk[:max_field-3] + "...")
+            embed.add_field(name=name, value=field_val, inline=False)
+            total_chars += len(name) + len(field_val)
+            if total_chars > max_overall:
+                break
+        if sum(len(x) for x in reply_cuts) > max_chunk * max_fields:
+            embed.add_field(name="Info", value="(réponse tronquée, trop longue !)", inline=False)
+        return embed
+
+    embed = build_gpt_embed(query, reply, interaction)
     await interaction.followup.send(embed=embed)
     if info:
         await interaction.followup.send(info)
@@ -661,7 +735,7 @@ async def roast(
             f"Erreur génération roast: {ex}", ephemeral=True
         )
         return
-    embed = discord.Embed(title=titre, description=texte, color=0xff8800 if intensite < 4 else 0xff0000)
+    embed = discord.Embed(title=titre, description=texte[:1024], color=0xff8800 if intensite < 4 else 0xff0000)
     await interaction.followup.send(embed=embed)
     vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
@@ -730,7 +804,7 @@ async def compliment(
             f"Erreur génération compliment: {ex}", ephemeral=True
         )
         return
-    embed = discord.Embed(title=titre, description=texte, color=0x41d98e)
+    embed = discord.Embed(title=titre, description=texte[:1024], color=0x41d98e)
     await interaction.followup.send(embed=embed)
     vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
