@@ -7,7 +7,7 @@ Un bot Discord qui raconte des blagues, roast tes amis, fait des compliments et 
 ## Fonctionnalités principales
 
 - **Blagues reddit / québécoises / sons spéciaux**
-- **Commandes slash fun** : `/joke`, `/jokeqc`, `/penis`, `/gpt`, `/roast`, `/compliment`, `/say-vc`, `/say-tc`, `/leave`, etc.
+- **Commandes slash fun** : `/joke`, `/jokeqc`, `/gpt`, `/roast`, `/compliment`, `/say-vc`, `/say-tc`, `/leave`, etc.
 - **Lecture vocale intelligente** : le bot lit les blagues et messages dans le salon vocal (TTS GPT-4o, accent québécois configurable)
 - **Compliments et “roasts” personnalisables**, avec option pour détailler des faits/mèmes pour personnaliser encore plus la vanne
 - **File d’attente audio** : plusieurs lectures peuvent être programmées et seront jouées à la suite, pas de conflit même si plusieurs membres envoient des commandes en même temps
@@ -38,7 +38,7 @@ Un bot Discord qui raconte des blagues, roast tes amis, fait des compliments et 
 
 2. **Créer le fichier `config.json`** (voir plus haut)
 
-3. **Ajoute tes sons MP3** dans le dossier `./Audio` (par exemple, `sort-pas-ton-penis.mp3`)
+3. **Ajoute tes sons MP3** dans le dossier Audio
 
 4. **Lance le bot**
     ```
