@@ -54,6 +54,8 @@ _vc_blocks = defaultdict(dict)  # (guild_id, channel_id): {user_id: until_ts}
 # ----- Historique commandes -----
 HISTORY_FILE = "/app/data/command_history.json"
 _history_lock = threading.Lock()
+
+
 def log_command(user: discord.User, command_name: str, options: Dict[str, Any], guild: discord.Guild = None):
     entry = {
         "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
@@ -78,6 +80,7 @@ def log_command(user: discord.User, command_name: str, options: Dict[str, Any], 
                 json.dump(history, out, ensure_ascii=False, indent=2)
         except Exception as e:
             logging.error(f"Error writing command history: {e}")
+
 def get_recent_history(n=15):
     with _history_lock:
         try:
@@ -89,6 +92,7 @@ def get_recent_history(n=15):
             logging.error(f"Error reading command history: {e}")
             return []
     return items[-n:] if len(items) > n else items
+
 # ----- Fin historique -----
 def is_vc_blocked_for_user(guild_id, channel_id, user_list):
     now = time.time()
@@ -97,6 +101,7 @@ def is_vc_blocked_for_user(guild_id, channel_id, user_list):
     for uid in expired:
         del blocks[uid]
     return list(set(blocks.keys()) & set(user_list))
+
 def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     if interaction.user.voice and interaction.user.voice.channel:
         return interaction.user.voice.channel
@@ -105,6 +110,7 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
         if perms.connect and perms.speak:
             return specified
     return None
+
 async def fetch_reddit_top(subreddit, headers, max_posts=1000):
     url = f"https://www.reddit.com/r/{subreddit}/top.json?t=year&limit=1000"
     loop = asyncio.get_event_loop()
@@ -126,6 +132,7 @@ async def fetch_reddit_top(subreddit, headers, max_posts=1000):
                 break
         return posts[:max_posts]
     return await loop.run_in_executor(None, fetch)
+
 async def load_reddit_jokes():
     logging.info("Loading Reddit jokes...")
     unique = defaultdict(list)
@@ -141,6 +148,7 @@ async def load_reddit_jokes():
                 seen.add(k)
     logging.info(f"Loaded {sum(len(x) for x in unique.values())} jokes unique from Reddit.")
     return unique
+
 def run_tts(joke_text, filename, voice, instructions):
     try:
         resp = requests.post(
@@ -168,6 +176,7 @@ def run_tts(joke_text, filename, voice, instructions):
     except Exception as ex:
         logging.error(f"TTS network error: {ex}")
         return False
+
 def run_gpt(query, system_prompt):
     try:
         resp = requests.post(
@@ -193,6 +202,7 @@ def run_gpt(query, system_prompt):
     except Exception as ex:
         logging.error(f"GPT network error: {ex}")
         return "Erreur : impossible de contacter Azure OpenAI."
+
 async def play_audio(interaction, file_path, voice_channel):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File {file_path} not found.")
@@ -211,6 +221,7 @@ async def play_audio(interaction, file_path, voice_channel):
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock))
     await fut
+
 async def _run_audio_queue(guild, queue, lock):
     async with lock:
         while not queue.empty():
@@ -225,26 +236,32 @@ async def _run_audio_queue(guild, queue, lock):
                 while vc.is_playing():
                     await asyncio.sleep(1)
                 await vc.disconnect()
-                fut.set_result(None)
+                if not fut.done():
+                    fut.set_result(None)
             except Exception as e:
-                fut.set_exception(e)
+                if not fut.done():
+                    fut.set_exception(e)
             finally:
                 try:
                     if file_path.startswith(tempfile.gettempdir()) and os.path.exists(file_path):
                         os.remove(file_path)
                 except Exception as ex:
                     logging.warning(f"Erreur suppression fichier temp: {ex}")
+
 async def _delayed_reset_gpt(gid):
     await asyncio.sleep(24 * 3600)
     _guild_gpt_prompt[gid] = DEFAULT_GPT_PROMPT
     _guild_gpt_prompt_reset_task[gid] = None
+
 async def _delayed_reset_sayvc(gid):
     await asyncio.sleep(24 * 3600)
     _guild_sayvc_instructions[gid] = DEFAULT_SAYVC_INSTRUCTIONS
     _guild_sayvc_reset_task[gid] = None
+
 def _cancel_task(task):
     if task and not task.done():
         task.cancel()
+
 @bot.event
 async def on_ready():
     logging.info(f"Bot logged in as {bot.user}!")
@@ -256,15 +273,18 @@ async def on_ready():
         print(e)
     await bot.change_presence(activity=discord.Game(name="Tape /help"))
     preload_jokes_task.start()
+
 @tasks.loop(count=1)
 async def preload_jokes_task():
     global reddit_jokes_by_sub
     await asyncio.sleep(2)
     reddit_jokes_by_sub = await load_reddit_jokes()
+
 @bot.tree.command(name="ping", description="Renvoie Pong !")
 async def ping(interaction: discord.Interaction):
     log_command(interaction.user, "ping", {}, guild=interaction.guild)
     await interaction.response.send_message("Pong !", ephemeral=True)
+
 @bot.tree.command(name="bloque", description="Bloque le bot pour 2h de rejoindre ton vocal actuel")
 async def bloque(interaction: discord.Interaction):
     log_command(interaction.user, "bloque", {}, guild=interaction.guild)
@@ -280,6 +300,7 @@ async def bloque(interaction: discord.Interaction):
     await interaction.response.send_message(
         f"🔒 Le bot ne peux rejoindre **{channel.name}** pour toi pendant 2h. Refais `/bloque` pour prolonger.",
         ephemeral=True)
+
 @bot.tree.command(name="debloque", description="Enlève ton blocage dans le salon vocal")
 async def debloque(interaction: discord.Interaction):
     log_command(interaction.user, "debloque", {}, guild=interaction.guild)
@@ -298,6 +319,7 @@ async def debloque(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(
             f"Ce salon n’était pas bloqué par toi !", ephemeral=True)
+
 @bot.tree.command(name="jokeqc", description="Blague québécoise mp3")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def jokeqc(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
@@ -323,6 +345,7 @@ async def jokeqc(interaction: discord.Interaction, voice_channel: discord.VoiceC
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
+
 @bot.tree.command(name="joke", description="Blague Reddit en vocal")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def joke(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
@@ -368,6 +391,7 @@ async def joke(interaction: discord.Interaction, voice_channel: discord.VoiceCha
     finally:
         try: os.remove(filename)
         except: pass
+
 @bot.tree.command(name="leave", description="Quitte le vocal")
 async def leave(interaction: discord.Interaction):
     log_command(interaction.user, "leave", {}, guild=interaction.guild)
@@ -381,6 +405,7 @@ async def leave(interaction: discord.Interaction):
             await interaction.followup.send("Je quitte le salon vocal.", ephemeral=True)
     else:
         await interaction.followup.send("Le bot n'est pas connecté au vocal.", ephemeral=True)
+
 @bot.tree.command(name="penis", description="Joue un son spécial !")
 @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
 async def penis(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
@@ -407,6 +432,7 @@ async def penis(interaction: discord.Interaction, voice_channel: discord.VoiceCh
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
+
 @bot.tree.command(name="say-tc", description="Affiche le texte dans le salon texte")
 @app_commands.describe(message="Texte à afficher")
 async def say_tc(interaction: discord.Interaction, message: str):
@@ -573,6 +599,7 @@ async def gpt(
             try: os.remove(filename)
             except: pass
         await interaction.followup.send("Réponse lue dans le salon vocal.")
+
 @bot.tree.command(
     name="roast",
     description="Roast drôle et custom (1 à 5)"
@@ -658,6 +685,7 @@ async def roast(
         await interaction.followup.send("Roast balancé au vocal!", ephemeral=True)
     else:
         await interaction.followup.send("(Rejoins ou précise un salon vocal !)", ephemeral=True)
+
 @bot.tree.command(
     name="compliment",
     description="Compliment personnalisé (fun)"
@@ -725,6 +753,7 @@ async def compliment(
         await interaction.followup.send("Compliment lancé au vocal!", ephemeral=True)
     else:
         await interaction.followup.send("(Rejoins ou précise un salon vocal !)", ephemeral=True)
+
 @bot.tree.command(name="help", description="Commandes du bot")
 async def help(interaction: discord.Interaction):
     log_command(interaction.user, "help", {}, guild=interaction.guild)
@@ -799,6 +828,7 @@ async def help(interaction: discord.Interaction):
     )
     embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.command(name="reset-prompts", description="Reset prompts et TTS")
 async def reset_prompts(interaction: discord.Interaction):
     log_command(interaction.user, "reset_prompts", {}, guild=interaction.guild)
@@ -815,6 +845,7 @@ async def reset_prompts(interaction: discord.Interaction):
         ephemeral=True
     )
     logging.info(f"[{gid}] All prompts/instructions reset by {interaction.user}.")
+
 @bot.tree.command(name="history", description="Afficher tes 15 dernières commandes du bot (éphémère)")
 async def history(interaction: discord.Interaction):
     log_command(interaction.user, "history", {}, guild=interaction.guild)
@@ -841,6 +872,7 @@ async def history(interaction: discord.Interaction):
         txt = f"`{t}` - **{user}** : /{cmd} {ptxt}"
         embed.add_field(name="\u200b", value=txt[:1000], inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
+
 @bot.event
 async def on_app_command_error(interaction, error):
     try: await interaction.response.send_message(f"Erreur commande : {error}", ephemeral=True)
