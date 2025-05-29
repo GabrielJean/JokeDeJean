@@ -554,9 +554,8 @@ async def say_vc(
         if not success:
             await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
             return
-        await asyncio.wait_for(play_audio(interaction, filename, vc_channel), timeout=30)
-        # ----------- ENVOI EN PUBLIC VIA FOLLOWUP ----------
-        # PATCHED: safe embed
+        # On lance la lecture SANS attendre la fin :
+        asyncio.create_task(play_audio(interaction, filename, vc_channel))
         embed = build_safely_embed_for_sayvc(message, current_instructions, interaction.user.display_name)
         await interaction.followup.send(embed=embed, ephemeral=False)
     except RuntimeError as exc:
@@ -566,8 +565,8 @@ async def say_vc(
         await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
         return
     finally:
-        try: os.remove(filename)
-        except: pass
+        # Le fichier est effacé par play_audio
+        pass
     if info:
         await interaction.followup.send(info, ephemeral=True)
 
