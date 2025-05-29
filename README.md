@@ -1,78 +1,60 @@
-# Jean le Bot Québécois
-
-Un bot Discord qui raconte des blagues, roast tes amis, fait des compliments et lit tout ça en vocal avec un accent québécois (voix TTS GPT-4o) — et gère une file d’attente pour ne rien rater même si plusieurs commandes vocales sont lancées à la suite !
-
-![Jean le Bot](https://emoji.gg/assets/emoji/8170-laugh-emoji.png)
-
-## Fonctionnalités principales
-
-- **Blagues reddit / québécoises / sons spéciaux**
-- **Commandes slash fun** : `/joke`, `/jokeqc`, `/gpt`, `/roast`, `/compliment`, `/say-vc`, `/say-tc`, `/leave`, etc.
-- **Lecture vocale intelligente** : le bot lit les blagues et messages dans le salon vocal (TTS GPT-4o, accent québécois configurable)
-- **Compliments et “roasts” personnalisables**, avec option pour détailler des faits/mèmes pour personnaliser encore plus la vanne
-- **File d’attente audio** : plusieurs lectures peuvent être programmées et seront jouées à la suite, pas de conflit même si plusieurs membres envoient des commandes en même temps
-- **/help** intégré (liste toutes les commandes du bot)
-
-## Configuration requise
-
-- Python 3.9 ou plus
+# Jean the Québécois Bot
+A Discord bot that tells jokes, roasts your friends, gives compliments, and reads it all out loud in a Québécois accent (GPT-4o TTS voice) — and manages a queue so you don’t miss anything even if several voice commands are sent in a row!
+![Jean the Bot](https://emoji.gg/assets/emoji/8170-laugh-emoji.png)
+## Main Features
+- **Jokes from Reddit / Québécois jokes / special sound effects**
+- **Fun slash commands**: `/joke`, `/jokeqc`, `/gpt`, `/roast`, `/compliment`, `/say-vc`, `/say-tc`, `/leave`, etc.
+- **Smart voice reading**: the bot reads jokes and messages in the voice channel (GPT-4o TTS, configurable Québécois accent)
+- **Customizable compliments and “roasts”**, with the option to provide facts/memes for more personalized jokes
+- **Audio queue**: multiple readings can be scheduled and will play one after another, with no conflict even if several members send commands at the same time
+- **Built-in /help** (lists all bot commands)
+## Requirements
+- Python 3.9 or higher
 - **discord.py** ≥ 2.3
-- Les modules Python suivants : `discord`, `discord.ext`, `requests`
-- Un fichier de configuration `config.json` au format :
+- The following Python modules: `discord`, `discord.ext`, `requests`
+- A configuration file `config.json` in the format:
     ```json
     {
-      "token": "TON_TOKEN_BOT_DISCORD_ICI",
-      "tts_url": "URL_API_TTS",
-      "azure_gpt_url": "URL_API_GPT",
-      "api_key": "APIKEY_POUR_APIS"
+      "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+      "tts_url": "TTS_API_URL",
+      "azure_gpt_url": "GPT_API_URL",
+      "api_key": "APIKEY_FOR_APIS"
     }
     ```
-- Un dossier `./Audio` avec des fichiers MP3 (pour blagues québécoises et sons spéciaux)
-
+- A folder `./Audio` with MP3 files (for Québécois jokes and special sound effects)
 ## Installation
-
-1. **Installe les modules**
+1. **Install the modules**
     ```
     pip install discord.py requests
     ```
-
-2. **Créer le fichier `config.json`** (voir plus haut)
-
-3. **Ajoute tes sons MP3** dans le dossier Audio
-
-4. **Lance le bot**
+2. **Create the `config.json` file** (see above)
+3. **Add your MP3 sounds** to the folder `./Audio`
+4. **Start the bot**
     ```
     python tonbot.py
     ```
-
-## Commandes principales
-
-- `/help` – Affiche toutes les commandes du bot
-- `/joke` – Joue une blague reddit en vocal
-- `/jokeqc` – Joue une blague québécoise locale (mp3)
-- `/leave` – Force le bot à quitter le vocal
-- `/say-vc <texte>` – Fait lire du texte (accent configurable)
-- `/say-tc <texte>` – Fait écrire du texte dans le salon
-- `/gpt <question>` – Pose une question à GPT-4o et lit la réponse (vocal/text)
-- `/roast @membre [intensité] [détails]` – Roast public fun, accent québécois (niveau 1 doux à 5 salé)
-- `/compliment @membre [détails]` – Compliment personnalisé et vocal, accent québécois
-- `/reset-prompts` – Réinitialise prompts système et configs TTS du server
-
-## Fonctionnement de la file d’attente
-
-Quand plusieurs membres lancent des commandes audio (lecture mp3/TTS), chaque demande est mise en file et jouée **dans l’ordre**.
-👉 Personne ne sera “coupé” : tout sera lu dans l'ordre sans conflit.
-
+## Main Commands
+- `/help` – Shows all bot commands
+- `/joke` – Plays a Reddit joke in voice
+- `/jokeqc` – Plays a local Québécois joke (mp3)
+- `/leave` – Forces the bot to leave the voice channel
+- `/say-vc <text>` – Reads out text (configurable accent)
+- `/say-tc <text>` – Writes text in the text channel
+- `/gpt <question>` – Asks GPT-4o a question and reads the answer (voice/text)
+- `/roast @member [intensity] [details]` – Fun public roast, Québécois accent (level 1 mild to 5 salty)
+- `/compliment @member [details]` – Personalized and vocal compliment, Québécois accent
+- `/reset-prompts` – Resets system prompts and TTS server configs
+## How the Queue Works
+When multiple members send audio commands (mp3/TTS reading), each request is placed in a queue and played **in order**.
+👉 Nobody will be “cut off”: everything will be read in order without conflict.
 ## Bonus
-
-- **Logs** : toute l’activité du bot est enregistrée dans `bot.log`
-- **Multi-serveur** compatible
-- **Accent configurable** (avec `/say-vc` ou `/gpt`)
-
-## Exemples
-
+- **Logs**: all bot activity is recorded in `bot.log`
+- **Multi-server** compatible
+- **Configurable accent** (with `/say-vc` or `/gpt`)
+## Examples
 ```bash
 /joke
 /jokeqc
-/roast @Martin 5 "Toujours en retard aux games, adore les pizzas"
-/compliment @Julie "super à Mario Kart, meilleure rieuse du serveur"
+/roast @Martin 5 "Always late to games, loves pizzas"
+/compliment @Julie "awesome at Mario Kart, best laugh on the server"
+```
