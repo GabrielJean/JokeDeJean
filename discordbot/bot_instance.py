@@ -40,14 +40,21 @@ first_ready = True
 async def on_ready():
     global first_ready
     logging.info(f"Bot logged in as {bot.user}!")
+
+    # Show loading status immediately
+    await bot.change_presence(activity=discord.Game(name="Loading..."))
+
     if first_ready:
         logging.info("Loading Reddit jokes at startup...")
         await load_reddit_jokes()
         logging.info("Reddit jokes loaded.")
         refresh_reddit_jokes.start()
         first_ready = False
+
     from commands import setup_all_commands
     await setup_all_commands(bot)
     cmds = await bot.tree.sync()
     logging.info(f"Slash commands synced: {len(cmds)} cmds.")
+
+    # Show normal status after all is ready
     await bot.change_presence(activity=discord.Game(name="Tape /help"))

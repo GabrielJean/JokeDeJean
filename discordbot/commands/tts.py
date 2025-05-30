@@ -6,6 +6,45 @@ from tts_util import run_tts
 from audio_player import play_audio, get_voice_channel
 from history import log_command
 
+# Robust embed builder with Discord field/size limits
+def build_safe_tts_embed(message: str, instructions: str, display_name: str):
+    max_overall = 6000
+    max_title = 256
+    max_footer = 2048
+    max_field = 1024
+    max_fields = 25
+    max_chunk = 950
+
+    parts = []
+    rest = message or ""
+    while rest:
+        parts.append(rest[:max_chunk])
+        rest = rest[max_chunk:]
+
+    embed = discord.Embed(
+        title="💬 Texte prononcé en vocal"[:max_title],
+        color=0x00bcff,
+    )
+    # If small, put in description
+    if len(message) <= max_chunk and len(message) + len(embed.title) < (max_overall - 128):
+        embed.description = message
+
+    total_chars = len(embed.title or "") + len(embed.description or "")
+    for idx, chunk in enumerate(parts[:max_fields]):
+        name = "Message" if idx == 0 else f"…suite {idx}"
+        field_val = chunk if len(chunk) <= max_field else (chunk[:max_field-3] + "...")
+        embed.add_field(name=name, value=field_val, inline=False)
+        total_chars += len(name) + len(field_val)
+        if total_chars > max_overall:
+            break
+    if sum(len(x) for x in parts) > max_chunk * max_fields:
+        embed.add_field(name="…", value="(message coupé :trop long pour Discord embed!)", inline=False)
+    if instructions:
+        instr_val = (instructions if len(instructions) < max_field else instructions[:max_field-3] + "...")
+        embed.add_field(name="Style", value=instr_val, inline=False)
+    embed.set_footer(text=f"Demandé par {display_name}"[:max_footer])
+    return embed
+
 async def setup(bot):
     @bot.tree.command(
         name="say-vc",
@@ -49,7 +88,12 @@ async def setup(bot):
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
+            # queue play, but DO NOT await
             asyncio.create_task(play_audio(interaction, filename, vc_channel))
-            await interaction.followup.send("Lecture TTS lancée.", ephemeral=False)
+
+            # Send an embed with safe splitting
+            embed = build_safe_tts_embed(message, instructions, interaction.user.display_name)
+            await interaction.followup.send(embed=embed, ephemeral=False)
+
         except Exception as exc:
             await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
