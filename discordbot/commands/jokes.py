@@ -16,8 +16,8 @@ async def setup(bot):
     @bot.tree.command(name="joke", description="Blague Reddit en vocal")
     @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
     async def joke(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
+        await interaction.response.defer(thinking=True, ephemeral=True)  # Defer immediately
         log_command(interaction.user, "joke", {"voice_channel": str(voice_channel) if voice_channel else None}, guild=interaction.guild)
-        await interaction.response.defer(thinking=True, ephemeral=True)
         reddit_jokes_by_sub = get_reddit_jokes()
         if not reddit_jokes_by_sub or not any(len(v) > 0 for v in reddit_jokes_by_sub.values()):
             await interaction.followup.send("Aucune blague pour le moment, réessaye plus tard.", ephemeral=True)
