@@ -2,11 +2,14 @@ import discord
 import asyncio
 import tempfile
 import os
+import logging
 
 _voice_audio_queues = {}
 _voice_locks = {}
 _voice_now_playing = {}
 _voice_skip_flag = {}
+
+MAX_VOICE_CONNECT_RETRIES = 5
 
 def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     if hasattr(interaction.user, "voice") and interaction.user.voice and interaction.user.voice.channel:
@@ -20,6 +23,7 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
 async def play_audio(interaction, file_path, voice_channel):
     from bot_instance import bot
     if not os.path.exists(file_path):
+        logging.error(f"File {file_path} not found before playback.")
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
     gid = guild.id if guild else 0
@@ -41,6 +45,8 @@ async def _run_audio_queue(guild, queue, lock, gid):
         while not queue.empty():
             file_path, fut, voice_channel, interaction = await queue.get()
             try:
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"File {file_path} not found at playback time.")
                 vc = discord.utils.get(bot.voice_clients, guild=guild)
                 if not vc or not vc.is_connected():
                     vc = await voice_channel.connect()
@@ -72,8 +78,9 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 try:
                     if file_path.startswith(tempfile.gettempdir()) and os.path.exists(file_path):
                         os.remove(file_path)
+                        logging.info(f"Deleted temp audio file: {file_path}")
                 except Exception as ex:
-                    print(f"Audio cleanup warning: {ex}")
+                    logging.warning(f"Audio cleanup warning: {ex}")
 
 def skip_audio(voice_channel: discord.VoiceChannel):
     """Skip current playing audio in the guild for the specified channel."""
@@ -87,3 +94,18 @@ def skip_audio(voice_channel: discord.VoiceChannel):
         _voice_skip_flag[gid] = True
         return True
     return False
+
+async def join_voice_channel(channel, retries=0):
+    try:
+        await channel.connect()
+    except discord.errors.ConnectionClosed as e:
+        logging.error(f"Voice connection failed: {e} (attempt {retries+1})")
+        if retries < MAX_VOICE_CONNECT_RETRIES:
+            wait_time = 2 ** retries  # exponential backoff
+            await asyncio.sleep(wait_time)
+            await join_voice_channel(channel, retries + 1)
+        else:
+            logging.critical("Max voice connection retries reached. Giving up.")
+            # Optionally notify an admin or take other action
+    except Exception as e:
+        logging.exception("Unexpected error during voice connection")

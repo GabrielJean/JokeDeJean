@@ -7,6 +7,13 @@ import os
 with open("config.json", "r") as f:
     config = json.load(f)
 
+# Ensure the log file exists
+log_dir = os.path.dirname("./data/bot.log")
+os.makedirs(log_dir, exist_ok=True)
+if not os.path.exists("./data/bot.log"):
+    with open("./data/bot.log", "w") as f:
+        pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
