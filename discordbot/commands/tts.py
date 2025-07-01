@@ -81,7 +81,7 @@ async def setup(bot):
             filename = tmp.name
         try:
             success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, message, filename, "ash", instructions or "accent québécois comique"),
+                loop.run_in_executor(None, run_tts, message, filename, "ash", instructions or "Parle avec un accent québécois stéréotypé."),
                 timeout=20
             )
             if not success:

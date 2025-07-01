@@ -54,7 +54,7 @@ async def setup(bot):
         await interaction.followup.send(embed=embed)
         vc_channel = get_voice_channel(interaction, voice_channel)
         if vc_channel:
-            instructions = "Lis ce compliment façon humoriste québécois, émerveillé."
+            instructions = "Parle avec un accent québécois stéréotypé."
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 filename = tmp.name
             try:

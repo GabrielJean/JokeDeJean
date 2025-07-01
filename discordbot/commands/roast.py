@@ -60,7 +60,7 @@ async def setup(bot):
             texte = await asyncio.wait_for(
                 loop.run_in_executor(
                     None, run_gpt, prompt_gpt,
-                    "Stand-up québécois, franc-parler et punch."
+                    "Parle avec un accent québécois stéréotypé."
                 ),
                 timeout=18
             )
@@ -73,7 +73,7 @@ async def setup(bot):
         await interaction.followup.send(embed=embed)
         vc_channel = get_voice_channel(interaction, voice_channel)
         if vc_channel:
-            instructions = "Lis ce roast façon humoriste québécois, franc-parler."
+            instructions = "Parle avec un accent québécois stéréotypé."
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 filename = tmp.name
             try:
