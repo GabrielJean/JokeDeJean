@@ -18,7 +18,7 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     return None
 
 async def play_audio(interaction, file_path, voice_channel):
-    from bot_instance import bot
+    from bot_instance import bot  # You must ensure bot_instance.bot is available
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
@@ -46,19 +46,15 @@ async def _run_audio_queue(guild, queue, lock, gid):
                     vc = await voice_channel.connect()
                 elif vc.channel != voice_channel:
                     await vc.move_to(voice_channel)
-
                 _voice_now_playing[gid] = vc
                 _voice_skip_flag[gid] = False
-
                 vc.play(discord.FFmpegPCMAudio(file_path))
-
                 # Wait for current file to finish or skip
                 while vc.is_playing():
                     if _voice_skip_flag.get(gid, False):
                         vc.stop()
                         break
                     await asyncio.sleep(0.5)
-
                 await vc.disconnect(force=True)
                 if not fut.done():
                     fut.set_result(None)
@@ -83,7 +79,15 @@ def skip_audio(voice_channel: discord.VoiceChannel):
     # If there is an ongoing playback:
     vc = _voice_now_playing.get(gid)
     if vc and vc.is_connected() and vc.is_playing():
-        # Set skip flag and disconnect will happen in the queue loop
+        _voice_skip_flag[gid] = True
+        return True
+    return False
+
+def skip_audio_by_guild(guild_id):
+    """Skip current playing audio in the guild with given ID."""
+    gid = guild_id
+    vc = _voice_now_playing.get(gid)
+    if vc and vc.is_connected() and vc.is_playing():
         _voice_skip_flag[gid] = True
         return True
     return False
