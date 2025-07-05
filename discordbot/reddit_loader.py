@@ -1,6 +1,7 @@
 import asyncio
 import requests
 import logging
+import os
 from collections import defaultdict
 
 REDDIT_SUBREDDITS = ["darkjokes", "jokes", "dadjokes"]
@@ -32,6 +33,9 @@ async def fetch_reddit_top(subreddit, headers, max_posts=1000):
     return await loop.run_in_executor(None, fetch)
 
 async def load_reddit_jokes():
+    if os.environ.get("LOAD_REDDIT", "false").lower() != "true":
+        logging.info("[Reddit] Skipping Reddit joke loading due to LOAD_REDDIT env variable.")
+        return
     global _reddit_jokes_by_sub
     async with _jokes_lock:
         unique = defaultdict(list)
