@@ -34,13 +34,16 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
             return
         loop = asyncio.get_running_loop()
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
             filename = tmp.name
+        mp3_filename = filename.replace('.webm', '.mp3')
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': filename,
-            'quiet': True,
+            'quiet': True,  # Normal log level
             'noplaylist': True,
+            'ffmpeg_location': '/usr/bin',
+            'overwrites': True,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -52,7 +55,11 @@ async def setup(bot):
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
             await asyncio.wait_for(loop.run_in_executor(None, download), timeout=60)
-            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            import os
+            if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
+                await interaction.followup.send("Erreur: le fichier audio téléchargé est vide ou absent.", ephemeral=True)
+                return
+            asyncio.create_task(play_audio(interaction, mp3_filename, vc_channel))
             await interaction.followup.send("Lecture audio YouTube lancée dans le salon vocal.", ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"Erreur lors du téléchargement ou de la lecture : {exc}", ephemeral=True)
