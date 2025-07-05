@@ -21,6 +21,20 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
+      - name: Diagnose DNS and network
+        run: |
+          echo "Tailscale status:"
+          tailscale status
+          echo "Tailscale IPv4:"
+          tailscale ip -4
+          echo "Trying DNS against your servers:"
+          dig gitea.docker-1.gwebs.ca @192.168.10.5 || echo "DNS10.5 FAIL"
+          dig gitea.docker-1.gwebs.ca @192.168.15.5 || echo "DNS15.5 FAIL"
+          dig gitea.docker-1.gwebs.ca || echo "Default NS FAIL"
+          echo "Trying to ping DNS servers:"
+          ping -c2 192.168.10.5 || echo "ping to 10.5 failed"
+          ping -c2 192.168.15.5 || echo "ping to 15.5 failed"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
