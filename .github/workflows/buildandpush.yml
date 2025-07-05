@@ -52,5 +52,6 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          dns: 192.168.10.5
           tags: |
             gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
