@@ -23,3 +23,23 @@ jobs:
           echo "${{ secrets.GITEA_REGISTRY_PASS }}" | docker login gitea.docker-1.gwebs.ca -u "${{ secrets.GITEA_REGISTRY_USER }}" --password-stdin
           docker build -t gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest .
           docker push gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
+
+      - name: Redeploy Stack in Portainer
+        env:
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+          STACK_NAME: "joke-de-jean"
+        run: |
+          set -e
+
+          # Get stack ID
+          stack_id=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks" | jq '.[] | select(.Name=="'"$STACK_NAME"'") | .Id')
+          if [ -z "$stack_id" ]; then
+            echo "Stack $STACK_NAME not found!"
+            exit 1
+          fi
+          echo "Stack ID: $stack_id"
+          # Redeploy
+          curl -sfSL -X POST \
+            -H "X-API-Key: $PORTAINER_API_KEY" \
+            "$PORTAINER_URL/api/stacks/$stack_id/redeploy"
