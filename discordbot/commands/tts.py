@@ -2,12 +2,10 @@ import discord
 from discord import app_commands
 import tempfile
 import asyncio
-
 from tts_util import run_tts
 from audio_player import play_audio, get_voice_channel, skip_audio
 from history import log_command
 
-# Robust embed builder with Discord field/size limits
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_overall = 6000
     max_title = 256
@@ -15,85 +13,105 @@ def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_field = 1024
     max_fields = 25
     max_chunk = 950
-    parts = []
-    rest = message or ""
-    while rest:
-        parts.append(rest[:max_chunk])
-        rest = rest[max_chunk:]
+
     embed = discord.Embed(
         title="💬 Texte prononcé en vocal"[:max_title],
         color=0x00bcff,
     )
-    # If small, put in description
+
+    # If message is small, put in description only, no field
     if len(message) <= max_chunk and len(message) + len(embed.title) < (max_overall - 128):
         embed.description = message
-    total_chars = len(embed.title or "") + len(embed.description or "")
-    for idx, chunk in enumerate(parts[:max_fields]):
-        name = "Message" if idx == 0 else f"…suite {idx}"
-        field_val = chunk if len(chunk) <= max_field else (chunk[:max_field-3] + "...")
-        embed.add_field(name=name, value=field_val, inline=False)
-        total_chars += len(name) + len(field_val)
-        if total_chars > max_overall:
-            break
-    if sum(len(x) for x in parts) > max_chunk * max_fields:
-        embed.add_field(name="…", value="(message coupé :trop long pour Discord embed!)", inline=False)
+    else:
+        # Split to fields
+        parts = []
+        rest = message or ""
+        while rest:
+            parts.append(rest[:max_chunk])
+            rest = rest[max_chunk:]
+        total_chars = len(embed.title or "")
+        for idx, chunk in enumerate(parts[:max_fields]):
+            name = "Message" if idx == 0 else f"…suite {idx}"
+            field_val = chunk if len(chunk) <= max_field else (chunk[:max_field-3] + "...")
+            embed.add_field(name=name, value=field_val, inline=False)
+            total_chars += len(name) + len(field_val)
+            if total_chars > max_overall:
+                break
+        if sum(len(x) for x in parts) > max_chunk * max_fields:
+            embed.add_field(name="…", value="(message coupé :trop long pour Discord embed!)", inline=False)
+
     if instructions:
         instr_val = (instructions if len(instructions) < max_field else instructions[:max_field-3] + "...")
         embed.add_field(name="Style", value=instr_val, inline=False)
     embed.set_footer(text=f"Demandé par {display_name}"[:max_footer])
     return embed
 
-async def setup(bot):
-    @bot.tree.command(
-        name="say-vc",
-        description="Lecture TTS en vocal"
+class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
+    message = discord.ui.TextInput(
+        label="Texte à lire",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        min_length=3,
+        max_length=1800,
+        placeholder="Que dois-je lire dans le vocal ?"
     )
-    @app_commands.describe(
-        message="Texte à lire",
-        instructions="Style de la voix (optionnel)",
-        sauvegarder_instructions="Réutiliser le style 24h",
-        voice_channel="Salon vocal cible (optionnel)"
+    instructions = discord.ui.TextInput(
+        label="Style de voix (optionnel)",
+        style=discord.TextStyle.short,
+        required=False,
+        max_length=250,
+        placeholder="Exemple : Ton enfantin, ou accent québécois"
     )
-    async def say_vc(
-        interaction: discord.Interaction,
-        message: str,
-        instructions: str = None,
-        sauvegarder_instructions: bool = False,
-        voice_channel: discord.VoiceChannel = None
-    ):
+
+    async def on_submit(self, interaction: discord.Interaction):
+        msg = self.message.value.strip()
+        instr = self.instructions.value.strip() if self.instructions.value else None
+
         log_command(
             interaction.user, "say_vc",
             {
-                "message": message,
-                "instructions": instructions,
-                "sauvegarder_instructions": sauvegarder_instructions,
-                "voice_channel": str(voice_channel) if voice_channel else None
+                "message": msg,
+                "instructions": instr,
+                "voice_channel": str(interaction.user.voice.channel) if (interaction.user.voice and interaction.user.voice.channel) else None
             },
             guild=interaction.guild
         )
-        await interaction.response.defer(thinking=True)
-        vc_channel = get_voice_channel(interaction, voice_channel)
+
+        vc_channel = get_voice_channel(interaction)
         if not vc_channel:
-            await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
+            await interaction.response.send_message(
+                "Vous devez être dans un salon vocal ou en préciser un.",
+                ephemeral=True
+            )
             return
+
+        await interaction.response.defer(thinking=True, ephemeral=False)
         loop = asyncio.get_running_loop()
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
+            style = instr or "Parle avec un accent québécois stéréotypé."
             success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, message, filename, "ash", instructions or "Parle avec un accent québécois stéréotypé."),
+                loop.run_in_executor(None, run_tts, msg, filename, "ash", style),
                 timeout=20
             )
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
-            # queue play, but DO NOT await
+
             asyncio.create_task(play_audio(interaction, filename, vc_channel))
-            # Send an embed with safe splitting
-            embed = build_safe_tts_embed(message, instructions, interaction.user.display_name)
+            embed = build_safe_tts_embed(msg, instr, interaction.user.display_name)
             await interaction.followup.send(embed=embed, ephemeral=False)
         except Exception as exc:
             await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
+
+async def setup(bot):
+    @bot.tree.command(
+        name="say-vc",
+        description="Lecture TTS en vocal (via une fenêtre de saisie)"
+    )
+    async def say_vc(interaction: discord.Interaction):
+        await interaction.response.send_modal(SayVCModal())
 
     @bot.tree.command(
         name="next",
