@@ -1,11 +1,12 @@
-name: Build and Push Docker Image
+name: Build, Push, and Redeploy Container via Portainer
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+
 jobs:
-  build-and-push:
+  build-push-redeploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -18,7 +19,13 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Restart container in Portainer
+      - name: Build and push Docker image (classic)
+        run: |
+          echo "${{ secrets.GITEA_REGISTRY_PASS }}" | docker login gitea.docker-1.gwebs.ca -u "${{ secrets.GITEA_REGISTRY_USER }}" --password-stdin
+          docker build -t gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest .
+          docker push gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
+
+      - name: Pull & Restart container in Portainer
         env:
           PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
@@ -32,11 +39,13 @@ jobs:
             echo "Container $CONTAINER_NAME not found!"
             exit 1
           fi
-          # Find image name and repull (optional but recommended)
+
+          # Find image name and re-pull (optional but recommended)
           image_name=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/containers/$container_id/json" | jq -r '.Config.Image')
           echo "Container uses image: $image_name"
           echo "Pulling latest image (if any)..."
           curl -sSL -X POST -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/images/create?fromImage=$image_name&tag=latest"
+
           # Restart the container
           echo "Restarting container..."
           curl -X POST -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/containers/$container_id/restart"
