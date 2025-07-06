@@ -24,22 +24,29 @@ jobs:
           docker build -t gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest .
           docker push gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
 
-      - name: Redeploy Stack in Portainer
+      - name: Restart container in Portainer
         env:
           PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
-          STACK_NAME: "joke-de-jean"
+          CONTAINER_NAME: jokedejean
         run: |
           set -e
-
-          # Get stack ID
-          stack_id=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/stacks" | jq '.[] | select(.Name=="'"$STACK_NAME"'") | .Id')
-          if [ -z "$stack_id" ]; then
-            echo "Stack $STACK_NAME not found!"
+          # Find ID
+          container_id=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" \
+            "$PORTAINER_URL/api/endpoints/1/docker/containers/json?all=1" | \
+            jq -r '.[] | select(.Names[] | contains("/'"$CONTAINER_NAME"'")) | .Id')
+          echo "Container ID: $container_id"
+          if [ -z "$container_id" ]; then
+            echo "Container $CONTAINER_NAME not found!"
             exit 1
           fi
-          echo "Stack ID: $stack_id"
-          # Redeploy
-          curl -sfSL -X POST \
-            -H "X-API-Key: $PORTAINER_API_KEY" \
-            "$PORTAINER_URL/api/stacks/$stack_id/redeploy"
+          # Find image name and repull (optional but recommended)
+          image_name=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/1/docker/containers/$container_id/json" | jq -r '.Config.Image')
+          echo "Container uses image: $image_name"
+          echo "Pulling latest image (if any)..."
+          curl -sSL -X POST -H "X-API-Key: $PORTAINER_API_KEY" \
+            "$PORTAINER_URL/api/endpoints/1/docker/images/create?fromImage=$image_name&tag=latest"
+          # Restart the container
+          echo "Restarting container..."
+          curl -X POST -H "X-API-Key: $PORTAINER_API_KEY" \
+            "$PORTAINER_URL/api/endpoints/1/docker/containers/$container_id/restart"
