@@ -7,6 +7,9 @@ from audio_player import play_audio, get_voice_channel, skip_audio_by_guild
 from history import log_command
 import os
 
+MAX_DURATION = 30 * 60  # 30 minutes in seconds
+YTDLP_TIMEOUT = 600     # 10 minutes in seconds
+
 class StopPlaybackView(discord.ui.View):
     def __init__(self, guild_id: int, initiator_id: int, *, timeout=120):
         super().__init__(timeout=timeout)
@@ -21,7 +24,6 @@ class StopPlaybackView(discord.ui.View):
                 ephemeral=True
             )
             return
-
         # Call skip_audio_by_guild: this will skip and disconnect the voice client (using your queue logic)
         success = skip_audio_by_guild(self.guild_id)
         if success:
@@ -44,6 +46,7 @@ class StopPlaybackView(discord.ui.View):
         self.stop()
 
 async def setup(bot):
+
     @bot.tree.command(
         name="yt",
         description="Joue l'audio d'une vidéo YouTube dans le vocal"
@@ -71,13 +74,31 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
             return
         loop = asyncio.get_running_loop()
+        # 1. Check duration FIRST
+        try:
+            def get_info():
+                with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                    return ydl.extract_info(url, download=False)
+            info = await asyncio.wait_for(loop.run_in_executor(None, get_info), timeout=60)
+            duration = info.get('duration')
+            if duration is None:
+                raise Exception("Impossible d'obtenir la durée de la vidéo.")
+            if duration > MAX_DURATION:
+                await interaction.followup.send(
+                    f"La vidéo est trop longue (max {MAX_DURATION//60} min) : {duration//60}:{duration%60:02d}.",
+                    ephemeral=True
+                )
+                return
+        except Exception as e:
+            await interaction.followup.send(f"Erreur lors de l'inspection de la vidéo : {e}", ephemeral=True)
+            return
         with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
             filename = tmp.name
         mp3_filename = filename.replace('.webm', '.mp3')
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': filename,
-            'quiet': True,  # Normal log level
+            'quiet': True,
             'noplaylist': True,
             'ffmpeg_location': '/usr/bin',
             'overwrites': True,
@@ -91,7 +112,7 @@ async def setup(bot):
             def download():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-            await asyncio.wait_for(loop.run_in_executor(None, download), timeout=60)
+            await asyncio.wait_for(loop.run_in_executor(None, download), timeout=YTDLP_TIMEOUT)
             if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
                 await interaction.followup.send("Erreur: le fichier audio téléchargé est vide ou absent.", ephemeral=True)
                 return
@@ -102,8 +123,13 @@ async def setup(bot):
                 ephemeral=True,
                 view=view
             )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "Téléchargement trop long : essayez une vidéo plus courte.",
+                ephemeral=True
+            )
         except Exception as exc:
-            await interaction.followup.send(f"Erreur lors du téléchargement ou de la lecture : {exc}", ephemeral=True)
+            await interaction.followup.send(f"Erreur lors du téléchargement ou de la lecture : {exc}", ephemeral=True)
 
     @bot.tree.command(
         name="ytsearch",
@@ -126,13 +152,13 @@ async def setup(bot):
         try:
             results = await loop.run_in_executor(None, search)
         except Exception as exc:
-            await interaction.followup.send(f"Erreur lors de la recherche : {exc}", ephemeral=True)
+            await interaction.followup.send(f"Erreur lors de la recherche : {exc}", ephemeral=True)
             return
         if not results:
             await interaction.followup.send("Aucun résultat trouvé.", ephemeral=True)
             return
         results = results[:3]
-        msg = "**🎵 Sélectionnez une vidéo à jouer :**\n\n"
+        msg = "**🎵 Sélectionnez une vidéo à jouer :**\n\n"
         for idx, entry in enumerate(results, 1):
             duration = entry.get('duration')
             duration_str = f" (`{duration//60}:{duration%60:02d}`)" if duration else ""
@@ -142,16 +168,32 @@ async def setup(bot):
                 f"{duration_str} — *{uploader}*\n"
             )
         msg += "\n---\nAppuyez sur un bouton ci-dessous pour jouer l'audio."
+
         class YTButtonView(discord.ui.View):
             def __init__(self, results, timeout=30):
                 super().__init__(timeout=timeout)
                 for idx, entry in enumerate(results, 1):
                     self.add_item(self.make_button(idx, entry))
+
             def make_button(self, idx, entry):
                 label = f"▶️ {idx}"
                 url = entry['webpage_url']
+                duration = entry.get('duration')
                 async def callback(interaction2: discord.Interaction):
                     await interaction2.response.defer(ephemeral=True)
+                    # Check video duration before download!
+                    if duration is None:
+                        await interaction2.followup.send(
+                            "Impossible d'obtenir la durée de la vidéo.",
+                            ephemeral=True
+                        )
+                        return
+                    if duration > MAX_DURATION:
+                        await interaction2.followup.send(
+                            f"La vidéo est trop longue (max {MAX_DURATION//60} min) : {duration//60}:{duration%60:02d}.",
+                            ephemeral=True
+                        )
+                        return
                     log_command(
                         interaction2.user, "ytsearch",
                         {
@@ -187,7 +229,7 @@ async def setup(bot):
                         def download():
                             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                                 ydl.download([url])
-                        await asyncio.get_running_loop().run_in_executor(None, download)
+                        await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(None, download), timeout=YTDLP_TIMEOUT)
                         if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
                             await interaction2.followup.send(
                                 "Erreur: le fichier audio téléchargé est vide ou absent.",
@@ -201,14 +243,20 @@ async def setup(bot):
                             ephemeral=True,
                             view=view
                         )
+                    except asyncio.TimeoutError:
+                        await interaction2.followup.send(
+                            "Téléchargement trop long : essayez une vidéo plus courte.",
+                            ephemeral=True
+                        )
                     except Exception as exc:
                         await interaction2.followup.send(
-                            f"Erreur lors du téléchargement ou de la lecture : {exc}",
+                            f"Erreur lors du téléchargement ou de la lecture : {exc}",
                             ephemeral=True
                         )
                 button = discord.ui.Button(label=label, style=discord.ButtonStyle.success, custom_id=str(idx))
                 button.callback = callback
                 return button
+
         view = YTButtonView(results)
         await interaction.followup.send(msg, view=view, ephemeral=True)
         await view.wait()

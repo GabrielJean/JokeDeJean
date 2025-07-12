@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from history import log_command, get_recent_history
+from audio_player import skip_audio_by_guild 
 
 async def setup(bot):
     @bot.tree.command(name="leave", description="Quitte le vocal")
@@ -13,7 +14,8 @@ async def setup(bot):
                 vc = client
                 break
         if vc:
-            try: await vc.disconnect(force=True)
+            try:
+                await vc.disconnect(force=True)
             except Exception:
                 await interaction.followup.send("Erreur de déconnexion.", ephemeral=True)
             else:
@@ -47,3 +49,30 @@ async def setup(bot):
             txt = f"`{t}` - **{user}** : /{cmd} {ptxt}"
             embed.add_field(name="\u200b", value=txt[:1000], inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # -----------------------------
+    #        /skip command
+    # -----------------------------
+    @bot.tree.command(name="skip", description="Passe la piste audio en cours dans ce serveur")
+    async def skip(interaction: discord.Interaction):
+        log_command(interaction.user, "skip", {}, guild=interaction.guild)
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # Require to be executed in a server and user in voice
+        if not interaction.guild:
+            await interaction.followup.send("La commande doit être exécutée dans un serveur.", ephemeral=True)
+            return
+        user = interaction.user
+        if not (hasattr(user, "voice") and user.voice and user.voice.channel):
+            await interaction.followup.send(
+                "Vous devez être dans un salon vocal pour skipper la musique.",
+                ephemeral=True
+            )
+            return
+
+        # Perform skip
+        success = skip_audio_by_guild(interaction.guild.id)
+        if success:
+            await interaction.followup.send("⏭️ Audio skippé.", ephemeral=False)
+        else:
+            await interaction.followup.send("Aucune piste n'est en cours de lecture.", ephemeral=True)
