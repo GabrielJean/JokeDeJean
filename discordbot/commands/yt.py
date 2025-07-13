@@ -94,6 +94,7 @@ async def setup(bot):
         duration = info.get("duration")
         video_title = info.get("title", "Vidéo YouTube")
         video_url = info.get("webpage_url", url)
+        is_live = bool(info.get("is_live")) or info.get("live_status") == "is_live"
         view = StopPlaybackView(interaction.guild.id, interaction.user.id, timeout=900)
         loop_msg = " (en boucle)" if loop else ""
         await interaction.followup.send(
@@ -112,6 +113,7 @@ async def setup(bot):
                 video_url=video_url,
                 announce_message=True,
                 loop=loop,
+                is_live=is_live,
             )
         )
 
@@ -136,7 +138,7 @@ async def setup(bot):
             results = await loop_async.run_in_executor(YTDLP_EXECUTOR, ytdlp_search, query)
             filtered_results = [
                 entry for entry in results
-                if entry.get('duration') is not None
+                if entry.get('duration') is not None or entry.get('is_live') or entry.get('live_status') == "is_live"
             ]
         except Exception as exc:
             await interaction.followup.send(f"Erreur lors de la recherche : {exc}", ephemeral=True)
@@ -149,11 +151,12 @@ async def setup(bot):
         out_lines = []
         for idx, entry in enumerate(results, 1):
             duration = entry.get('duration')
-            duration_str = f"{duration//60}:{duration%60:02d}" if duration else "??:??"
+            is_live = bool(entry.get('is_live')) or entry.get('live_status') == "is_live"
+            duration_str = "LIVE" if is_live else (f"{duration//60}:{duration%60:02d}" if duration else "??:??")
             title = entry['title']
             url = entry['webpage_url']
             uploader = entry.get('uploader', '')
-            out_lines.append(f"**{idx}.** {title[:80]} - {url} `{duration_str}` — *{uploader[:32]}*")
+            out_lines.append(f"**{idx}.** {title} {url} (`{duration_str}`) — *{uploader[:32]}*")
         out_text = "**Voici les résultats de la recherche :**\n\n" + "\n".join(out_lines)
         out_text += "\n\n**Sélectionnez la vidéo à jouer ci-dessous :**"
 
@@ -163,7 +166,10 @@ async def setup(bot):
                 options = [
                     discord.SelectOption(
                         label=f"{entry['title'][:80]}",
-                        description=f"{entry.get('uploader', '')[:50]} | {entry.get('duration', 0)//60}:{entry.get('duration', 0)%60:02d}",
+                        description=(f"{entry.get('uploader', '')[:50]} | "
+                                     + ("LIVE" if (entry.get('is_live') or entry.get("live_status") == "is_live")
+                                        else f"{entry.get('duration', 0)//60}:{entry.get('duration', 0)%60:02d}")
+                                     ),
                         value=str(idx)
                     ) for idx, entry in enumerate(results)
                 ]
@@ -189,6 +195,7 @@ async def setup(bot):
                 url = entry['webpage_url']
                 title = entry['title']
                 duration = entry.get("duration")
+                is_live = bool(entry.get("is_live")) or entry.get("live_status") == "is_live"
                 vc_channel = get_voice_channel(select_interaction, voice_channel)
                 if not vc_channel:
                     await select_interaction.response.send_message(
@@ -200,7 +207,7 @@ async def setup(bot):
                 try:
                     info = await loop_async.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, url)
                 except Exception as exc:
-                    await select_inter_interaction.followup.send(
+                    await select_interaction.followup.send(
                         f"Erreur lors de la récupération d'info : {exc}", ephemeral=True
                     )
                     return
@@ -222,6 +229,7 @@ async def setup(bot):
                         video_url=url,
                         announce_message=True,
                         loop=loop,
+                        is_live=is_live
                     )
                 )
                 self.stop()

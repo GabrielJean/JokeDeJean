@@ -29,6 +29,7 @@ async def play_audio(
     video_url=None,
     announce_message=True,
     loop=False,
+    is_live=False,
 ):
     from bot_instance import bot
     if not os.path.exists(file_path):
@@ -42,7 +43,7 @@ async def play_audio(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop))
+    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live))
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -57,6 +58,7 @@ async def play_ytdlp_stream(
     video_url=None,
     announce_message=True,
     loop=False,
+    is_live=False
 ):
     from bot_instance import bot
     stream_url = info_dict.get("url")
@@ -76,7 +78,7 @@ async def play_ytdlp_stream(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop))
+    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live))
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -96,6 +98,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 video_url,
                 announce_message,
                 loop_flag,
+                is_live,
             ) = await queue.get()
             try:
                 vc = discord.utils.get(bot.voice_clients, guild=guild)
@@ -121,7 +124,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 if announce_message:
                     if not title:
                         title = "Audio"
-                    msg_txt, bar = _progress_bar(0, duration, title, video_url)
+                    msg_txt, bar = _progress_bar(0, duration, title, video_url, is_live=is_live)
                     progress_msg = await interaction.channel.send(msg_txt)
 
                 while True:
@@ -133,6 +136,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                         "title": title,
                         "url": video_url,
                         "message": progress_msg,
+                        "is_live": is_live,
                     }
                     if progress_msg:
                         _progress_tasks[gid] = asyncio.create_task(
@@ -174,10 +178,11 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 if gid in _voice_now_playing:
                     info = _voice_now_playing[gid]
                     msg = info.get("message")
+                    is_live = info.get("is_live", False)
                     if msg:
                         elapsed = int(time.time() - info.get("start_time", time.time()))
                         msg_txt, bar = _progress_bar(
-                            elapsed, info.get("duration"), info.get("title"), info.get("url"), ended=True
+                            elapsed, info.get("duration"), info.get("title"), info.get("url"), ended=True, is_live=is_live
                         )
                         try:
                             asyncio.create_task(msg.edit(content=msg_txt))
@@ -203,33 +208,37 @@ async def _update_progress_message(gid):
         start = info.get("start_time")
         title = info.get("title")
         video_url = info.get("url")
+        is_live = info.get("is_live", False)
         if not msg: break
         if start is None: break
         elapsed = int(time.time() - start)
         try:
             msg_txt, bar = _progress_bar(
-                elapsed, duration, title, video_url
+                elapsed, duration, title, video_url, is_live=is_live
             )
             await msg.edit(content=msg_txt)
         except Exception:
             pass
-        await asyncio.sleep(1)
+        await asyncio.sleep(1)   # Update every second now!
 
-def _progress_bar(elapsed, duration, title, url, ended=False):
+def _progress_bar(elapsed, duration, title, url, ended=False, is_live=False):
     bar_len = 20
+    em = "⏹️" if ended else "▶️"
+    # CLEAN ANNOUNCEMENT: No [](), just text and url
+    title_line = f"{title} {url}" if url else f"{title}"
+    if is_live:
+        bar = "🔴 LIVE".center(bar_len)
+        msg = f"{title_line}\n🔴 {bar} — EN DIRECT"
+        return msg, bar
     if duration and duration > 0:
         frac = min(1, elapsed / duration)
         filled = int(bar_len * frac)
         bar = "█" * filled + "░" * (bar_len - filled)
         time_total = f"{duration//60}:{duration%60:02d}"
     else:
-        frac = 0
-        filled = 0
         bar = "░" * bar_len
         time_total = "??:??"
     time_now = f"{elapsed//60}:{elapsed%60:02d}"
-    em = "⏹️" if ended else "▶️"
-    title_line = f"[{title}]({url})" if url else f"{title}"
     msg = f"{title_line}\n{em} {bar} `{time_now} / {time_total}`"
     return msg, bar
 
