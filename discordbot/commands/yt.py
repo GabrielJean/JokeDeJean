@@ -115,30 +115,43 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
             return
 
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-            filename = tmp.name
-        mp3_filename = filename.replace('.webm', '.mp3')
-
         loop = asyncio.get_running_loop()
         try:
+            # 1. Get video info only (no download)
+            def get_info_only(url):
+                opts = {
+                    'quiet': True,
+                    'skip_download': True,
+                    'noplaylist': True,
+                    'default_search': 'auto',
+                    'cachedir': True,
+                }
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(url, download=False)
+            info = await asyncio.wait_for(
+                loop.run_in_executor(yt_executor, get_info_only, url),
+                timeout=30
+            )
+            duration = info.get('duration')
+            if duration is None:
+                await interaction.followup.send("Impossible d'obtenir la durée de la vidéo.", ephemeral=True)
+                return
+            if duration > MAX_DURATION:
+                await interaction.followup.send(
+                    f"La vidéo est trop longue (max {MAX_DURATION//60} min). "
+                    f"Durée de la vidéo : {duration//60:02d}:{duration%60:02d}.",
+                    ephemeral=True
+                )
+                return
+
+            # 2. Download audio only if duration is OK
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+                filename = tmp.name
+            mp3_filename = filename.replace('.webm', '.mp3')
             info = await asyncio.wait_for(
                 loop.run_in_executor(yt_executor, yt_dlp_download_and_info, url, filename),
                 timeout=YTDLP_TIMEOUT
             )
-            duration = info.get('duration')
-            if duration is None:
-                if os.path.exists(mp3_filename):
-                    os.remove(mp3_filename)
-                await interaction.followup.send("Impossible d'obtenir la durée de la vidéo.", ephemeral=True)
-                return
-            if duration > MAX_DURATION:
-                if os.path.exists(mp3_filename):
-                    os.remove(mp3_filename)
-                await interaction.followup.send(
-                    f"La vidéo est trop longue (max {MAX_DURATION//60} min) : {duration//60:02d}.",
-                    ephemeral=True
-                )
-                return
             if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
                 await interaction.followup.send("Erreur: le fichier audio n'a pas été généré.", ephemeral=True)
                 return
@@ -201,30 +214,43 @@ async def setup(bot):
                         await interaction2.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
                         return
 
-                    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-                        filename = tmp.name
-                    mp3_filename = filename.replace('.webm', '.mp3')
-
+                    loop = asyncio.get_running_loop()
                     try:
+                        # 1. Get video info only (no download)
+                        def get_info_only(url):
+                            opts = {
+                                'quiet': True,
+                                'skip_download': True,
+                                'noplaylist': True,
+                                'default_search': 'auto',
+                                'cachedir': True,
+                            }
+                            with yt_dlp.YoutubeDL(opts) as ydl:
+                                return ydl.extract_info(url, download=False)
                         info = await asyncio.wait_for(
-                            asyncio.get_running_loop().run_in_executor(
-                                yt_executor, yt_dlp_download_and_info, url, filename),
-                            timeout=YTDLP_TIMEOUT
+                            loop.run_in_executor(yt_executor, get_info_only, url),
+                            timeout=30
                         )
                         duration = info.get('duration')
                         if duration is None:
-                            if os.path.exists(mp3_filename):
-                                os.remove(mp3_filename)
                             await interaction2.followup.send("Impossible d'obtenir la durée de la vidéo.", ephemeral=True)
                             return
                         if duration > MAX_DURATION:
-                            if os.path.exists(mp3_filename):
-                                os.remove(mp3_filename)
                             await interaction2.followup.send(
-                                f"La vidéo est trop longue (max {MAX_DURATION//60} min) : {duration//60:02d}.",
+                                f"La vidéo est trop longue (max {MAX_DURATION//60} min). "
+                                f"Durée de la vidéo : {duration//60:02d}:{duration%60:02d}.",
                                 ephemeral=True
                             )
                             return
+
+                        # Only download if duration is OK
+                        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+                            filename = tmp.name
+                        mp3_filename = filename.replace('.webm', '.mp3')
+                        info = await asyncio.wait_for(
+                            loop.run_in_executor(yt_executor, yt_dlp_download_and_info, url, filename),
+                            timeout=YTDLP_TIMEOUT
+                        )
                         if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
                             await interaction2.followup.send("Erreur: le fichier audio n'a pas été généré.", ephemeral=True)
                             return
