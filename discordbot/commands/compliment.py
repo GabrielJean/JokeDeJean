@@ -240,7 +240,7 @@ async def do_compliment(interaction, cible_id, intensite, details):
         )
         return
     embed = discord.Embed(title=titre, description=texte[:1024], color=0x41d98e)
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed)  # <-- Remove ephemeral=True here
     log_command(
         interaction.user, "compliment",
         {

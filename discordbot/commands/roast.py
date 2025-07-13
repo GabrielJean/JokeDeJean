@@ -241,7 +241,7 @@ async def do_roast(interaction, cible_id, intensite, details):
         return
     embed = discord.Embed(title=titre, description=texte[:1024],
                           color=0xff8800 if intensite < 4 else 0xff0000)
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed)  # <-- Remove ephemeral=True here
     log_command(
         interaction.user, "roast",
         {

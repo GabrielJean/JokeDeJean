@@ -267,7 +267,7 @@ async def setup(bot):
                         view = StopPlaybackView(interaction2.guild.id, interaction2.user.id)
                         await interaction2.followup.send(
                             f"▶️ Lecture de [{entry['title']}]({url}) lancée dans le salon vocal.",
-                            ephemeral=True, view=view
+                            view=view  # <-- ephemeral=True retiré ici
                         )
                     except asyncio.TimeoutError:
                         await interaction2.followup.send("Téléchargement trop long : essayez une vidéo plus courte.", ephemeral=True)
