@@ -70,14 +70,20 @@ def yt_dlp_download_and_info(url: str, filename: str):
 def yt_dlp_search(query: str):
     opts = {
         'quiet': True,
-        'extract_flat': 'in_playlist',
-        'cachedir': True,
+        'extract_flat': True,          # Don't recurse/playlists
         'noplaylist': True,
         'skip_download': True,
+        'default_search': 'ytsearch',  # Always force ytsearch mode
+        'cachedir': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
-        res = ydl.extract_info(f"ytsearch5:{query}", download=False)
-        entries = res["entries"] if "entries" in res else []
+        # Only search for 3 videos, do NOT slice, only basic info so it's instant
+        res = ydl.extract_info(f"ytsearch3:{query}", download=False)
+        # Only return pure videos, not channels or playlists
+        entries = [
+            e for e in (res.get("entries") or [])
+            if (e.get('_type', 'video') == 'video')
+        ]
     return entries
 
 async def setup(bot):
@@ -164,7 +170,7 @@ async def setup(bot):
         try:
             results = await asyncio.wait_for(
                 loop.run_in_executor(yt_executor, yt_dlp_search, query),
-                timeout=60
+                timeout=15
             )
         except Exception as exc:
             await interaction.followup.send(f"Erreur lors de la recherche : {exc}", ephemeral=True)
@@ -173,16 +179,10 @@ async def setup(bot):
             await interaction.followup.send("Aucun résultat trouvé.", ephemeral=True)
             return
 
-        results = results[:3]
+        # Show ONLY titles (don't trigger network fetch for durations). Fast!
         msg = "**🎵 Sélectionnez une vidéo à jouer :**\n\n"
         for idx, entry in enumerate(results, 1):
-            duration = entry.get('duration')
-            duration_str = f" (`{duration//60}:{duration%60:02d}`)" if duration else ""
-            uploader = entry.get('uploader', '')
-            msg += (
-                f"**{idx}.** [{entry['title']}]({entry['url']})"
-                f"{duration_str} — *{uploader}*\n"
-            )
+            msg += f"**{idx}.** [{entry['title']}]({entry['url']})\n"
         msg += "\n---\nAppuyez sur un bouton ci-dessous pour jouer l'audio."
 
         class YTButtonView(discord.ui.View):
