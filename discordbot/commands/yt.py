@@ -1,17 +1,27 @@
 import discord
 from discord import app_commands
-import tempfile
 import asyncio
 import yt_dlp
-from audio_player import play_audio, get_voice_channel, skip_audio_by_guild
+from audio_player import play_audio, play_ytdlp_stream, get_voice_channel, skip_audio_by_guild
 from history import log_command
-import os
+from concurrent.futures import ProcessPoolExecutor
+
+YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
+
+def ytdlp_get_info(url):
+    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True}) as ydl:
+        return ydl.extract_info(url, download=False)
+
+def ytdlp_search(query):
+    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True}) as ydl:
+        return ydl.extract_info(f"ytsearch3:{query}", download=False)['entries']
 
 class StopPlaybackView(discord.ui.View):
-    def __init__(self, guild_id: int, initiator_id: int, *, timeout=120):
+    def __init__(self, guild_id: int, initiator_id: int, *, timeout=900):
         super().__init__(timeout=timeout)
         self.guild_id = guild_id
         self.initiator_id = initiator_id
+        self.message = None
 
     @discord.ui.button(label="⏹️ Arrêter la lecture", style=discord.ButtonStyle.danger)
     async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -41,6 +51,20 @@ class StopPlaybackView(discord.ui.View):
             pass
         self.stop()
 
+    async def on_timeout(self):
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    content="⏹️ Ce bouton de contrôle a expiré (trop de temps s'est écoulé).\n"
+                            "Relancez la commande pour contrôler à nouveau.",
+                    view=self
+                )
+            except Exception:
+                pass
+
 async def setup(bot):
     @bot.tree.command(
         name="yt",
@@ -68,52 +92,37 @@ async def setup(bot):
         if not vc_channel:
             await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
             return
+
         loop = asyncio.get_running_loop()
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-            filename = tmp.name
-        mp3_filename = filename.replace('.webm', '.mp3')
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': filename,
-            'quiet': True,
-            'noplaylist': True,
-            'ffmpeg_location': '/usr/bin',
-            'overwrites': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        }
         try:
-            def download():
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-            await asyncio.wait_for(loop.run_in_executor(None, download), timeout=60)
-            if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
-                await interaction.followup.send("Erreur: le fichier audio téléchargé est vide ou absent.", ephemeral=True)
-                return
-
-            # Fetch video info for public announcement
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                video_title = info.get("title", "Vidéo YouTube")
-                video_url = info.get("webpage_url", url)
-
-            # Public announcement
-            await interaction.channel.send(
-                f"▶️ **{interaction.user.mention} lance la lecture :** [{video_title}]({video_url})"
-            )
-
-            asyncio.create_task(play_audio(interaction, mp3_filename, vc_channel))
-            view = StopPlaybackView(interaction.guild.id, interaction.user.id)
-            await interaction.followup.send(
-                "Lecture audio YouTube lancée dans le salon vocal.",
-                ephemeral=True,
-                view=view
-            )
+            info = await loop.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, url)
         except Exception as exc:
-            await interaction.followup.send(f"Erreur lors du téléchargement ou de la lecture : {exc}", ephemeral=True)
+            await interaction.followup.send(f"Erreur lors de la récupération d'info : {exc}", ephemeral=True)
+            return
+        duration = info.get("duration")
+        video_title = info.get("title", "Vidéo YouTube")
+        video_url = info.get("webpage_url", url)
+
+        view = StopPlaybackView(interaction.guild.id, interaction.user.id, timeout=900)
+        msg = await interaction.followup.send(
+            "Lecture audio YouTube lancée dans le salon vocal \n"
+            "Regardez ce salon pour une barre de progression !",
+            ephemeral=True,
+            view=view
+        )
+        view.message = msg
+
+        asyncio.create_task(
+            play_ytdlp_stream(
+                interaction,
+                info,
+                vc_channel,
+                duration=duration,
+                title=video_title,
+                video_url=video_url,
+                announce_message=True,
+            )
+        )
 
     @bot.tree.command(
         name="ytsearch",
@@ -130,106 +139,99 @@ async def setup(bot):
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         loop = asyncio.get_running_loop()
-        def search():
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                return ydl.extract_info(f"ytsearch5:{query}", download=False)['entries']
         try:
-            results = await loop.run_in_executor(None, search)
+            results = await loop.run_in_executor(YTDLP_EXECUTOR, ytdlp_search, query)
+            filtered_results = [
+                entry for entry in results
+                if entry.get('duration') is not None
+            ]
         except Exception as exc:
             await interaction.followup.send(f"Erreur lors de la recherche : {exc}", ephemeral=True)
             return
-        if not results:
+        if not filtered_results:
             await interaction.followup.send("Aucun résultat trouvé.", ephemeral=True)
             return
-        results = results[:3]
-        msg = "**🎵 Sélectionnez une vidéo à jouer :**\n\n"
+        display_n = min(3, len(filtered_results))  # Show only top 3 videos
+        results = filtered_results[:display_n]
+
+        out_lines = []
         for idx, entry in enumerate(results, 1):
             duration = entry.get('duration')
-            duration_str = f" (`{duration//60}:{duration%60:02d}`)" if duration else ""
+            duration_str = f"{duration//60}:{duration%60:02d}" if duration else "??:??"
+            title = entry['title']
+            url = entry['webpage_url']
             uploader = entry.get('uploader', '')
-            msg += (
-                f"**{idx}.** [{entry['title']}]({entry['webpage_url']})"
-                f"{duration_str} — *{uploader}*\n"
-            )
-        msg += "\n---\nAppuyez sur un bouton ci-dessous pour jouer l'audio."
+            out_lines.append(f"**{idx}.** [{title[:80]}]({url}) (`{duration_str}`) — *{uploader[:32]}*")
+        out_text = "**Voici les résultats de la recherche :**\n\n" + "\n".join(out_lines)
+        out_text += "\n\n**Sélectionnez la vidéo à jouer ci-dessous :**"
 
-        class YTButtonView(discord.ui.View):
-            def __init__(self, results, timeout=30):
-                super().__init__(timeout=timeout)
-                for idx, entry in enumerate(results, 1):
-                    self.add_item(self.make_button(idx, entry))
+        class YTSelectView(discord.ui.View):
+            def __init__(self, results):
+                super().__init__(timeout=60)
+                options = [
+                    discord.SelectOption(
+                        label=f"{entry['title'][:80]}",
+                        description=f"{entry.get('uploader', '')[:50]} | {entry.get('duration', 0)//60}:{entry.get('duration', 0)%60:02d}",
+                        value=str(idx)
+                    ) for idx, entry in enumerate(results)
+                ]
+                self.select = discord.ui.Select(
+                    placeholder="Cliquez pour choisir une vidéo à jouer...",
+                    min_values=1,
+                    max_values=1,
+                    options=options
+                )
+                self.select.callback = self.select_callback
+                self.add_item(self.select)
+                self.results = results
 
-            def make_button(self, idx, entry):
-                label = f"▶️ {idx}"
-                url = entry['webpage_url']
-                video_title = entry['title']
-
-                async def callback(interaction2: discord.Interaction):
-                    await interaction2.response.defer(ephemeral=True)
-                    log_command(
-                        interaction2.user, "ytsearch",
-                        {
-                            "url": url,
-                            "voice_channel": str(voice_channel) if voice_channel else None
-                        },
-                        guild=interaction2.guild
+            async def select_callback(self, select_interaction: discord.Interaction):
+                if select_interaction.user.id != interaction.user.id:
+                    await select_interaction.response.send_message(
+                        "Seul l'utilisateur ayant fait la commande peut sélectionner.",
+                        ephemeral=True
                     )
-                    vc_channel = get_voice_channel(interaction2, voice_channel)
-                    if not vc_channel:
-                        await interaction2.followup.send(
-                            "Vous devez être dans un salon vocal ou en préciser un.",
-                            ephemeral=True
-                        )
-                        return
-                    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-                        filename = tmp.name
-                    mp3_filename = filename.replace('.webm', '.mp3')
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'outtmpl': filename,
-                        'quiet': True,
-                        'noplaylist': True,
-                        'ffmpeg_location': '/usr/bin',
-                        'overwrites': True,
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                            'preferredquality': '192',
-                        }],
-                    }
-                    try:
-                        def download():
-                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                                ydl.download([url])
-                        await asyncio.get_running_loop().run_in_executor(None, download)
-                        if not os.path.exists(mp3_filename) or os.path.getsize(mp3_filename) == 0:
-                            await interaction2.followup.send(
-                                "Erreur: le fichier audio téléchargé est vide ou absent.",
-                                ephemeral=True
-                            )
-                            return
+                    return
+                choice = int(self.select.values[0])
+                entry = self.results[choice]
+                url = entry['webpage_url']
+                title = entry['title']
+                duration = entry.get("duration")
+                vc_channel = get_voice_channel(select_interaction, voice_channel)
+                if not vc_channel:
+                    await select_interaction.response.send_message(
+                        "Vous devez être dans un salon vocal ou en préciser un.",
+                        ephemeral=True
+                    )
+                    return
+                await select_interaction.response.defer(ephemeral=True)
+                try:
+                    info = await loop.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, url)
+                except Exception as exc:
+                    await select_interaction.followup.send(
+                        f"Erreur lors de la récupération d'info : {exc}", ephemeral=True
+                    )
+                    return
+                view = StopPlaybackView(select_interaction.guild.id, select_interaction.user.id, timeout=900)
+                msg2 = await select_interaction.followup.send(
+                    f"Lecture de {title} - {url} lancée dans le salon vocal. \n"
+                    "Regardez ce salon pour la barre de progression !",
+                    ephemeral=True,
+                    view=view
+                )
+                view.message = msg2
+                asyncio.create_task(
+                    play_ytdlp_stream(
+                        select_interaction,
+                        info,
+                        vc_channel,
+                        duration=duration,
+                        title=title,
+                        video_url=url,
+                        announce_message=True,
+                    )
+                )
+                self.stop()
 
-                        # Public announcement in channel
-                        await interaction2.channel.send(
-                            f"▶️ **{interaction2.user.mention} lance la lecture :** [{video_title}]({url})"
-                        )
-
-                        asyncio.create_task(play_audio(interaction2, mp3_filename, vc_channel))
-                        view = StopPlaybackView(interaction2.guild.id, interaction2.user.id)
-                        await interaction2.followup.send(
-                            f"Lecture de [{video_title}]({url}) lancée dans le salon vocal.",
-                            ephemeral=True,
-                            view=view
-                        )
-                    except Exception as exc:
-                        await interaction2.followup.send(
-                            f"Erreur lors du téléchargement ou de la lecture : {exc}",
-                            ephemeral=True
-                        )
-                button = discord.ui.Button(label=label, style=discord.ButtonStyle.success, custom_id=str(idx))
-                button.callback = callback
-                return button
-
-        view = YTButtonView(results)
-        await interaction.followup.send(msg, view=view, ephemeral=True)
-        await view.wait()
+        view = YTSelectView(results)
+        await interaction.followup.send(content=out_text, view=view, ephemeral=True)
