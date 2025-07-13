@@ -28,6 +28,7 @@ async def play_audio(
     title=None,
     video_url=None,
     announce_message=True,
+    loop=False,  # <---- ADDED parameter
 ):
     from bot_instance import bot
     if not os.path.exists(file_path):
@@ -41,7 +42,7 @@ async def play_audio(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message))
+    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop))  # Added loop
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -55,6 +56,7 @@ async def play_ytdlp_stream(
     title=None,
     video_url=None,
     announce_message=True,
+    loop=False,  # <---- ADDED parameter
 ):
     from bot_instance import bot
     stream_url = info_dict.get("url")
@@ -74,7 +76,7 @@ async def play_ytdlp_stream(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message))
+    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop))  # Added loop
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -93,6 +95,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 title,
                 video_url,
                 announce_message,
+                loop_flag,  # <--- ADDED
             ) = await queue.get()
             try:
                 vc = discord.utils.get(bot.voice_clients, guild=guild)
@@ -100,42 +103,71 @@ async def _run_audio_queue(guild, queue, lock, gid):
                     vc = await voice_channel.connect()
                 elif vc.channel != voice_channel:
                     await vc.move_to(voice_channel)
-                start_time = time.time()
-                progress_msg = None
-                if announce_message:
-                    if not title:
-                        title = "Audio"
-                    msg_txt, bar = _progress_bar(0, duration, title, video_url)
-                    progress_msg = await interaction.channel.send(msg_txt)
-                _voice_now_playing[gid] = {
-                    "vc": vc,
-                    "start_time": start_time,
-                    "duration": duration,
-                    "title": title,
-                    "url": video_url,
-                    "message": progress_msg,
-                }
-                if progress_msg:
-                    _progress_tasks[gid] = asyncio.create_task(
-                        _update_progress_message(gid)
-                    )
-                _voice_skip_flag[gid] = False
 
-                if not use_stream:
-                    vc.play(discord.FFmpegPCMAudio(file_path))
-                else:
-                    vc.play(
-                        discord.FFmpegPCMAudio(
+                def start_play():
+                    if not use_stream:
+                        return discord.FFmpegPCMAudio(file_path)
+                    else:
+                        return discord.FFmpegPCMAudio(
                             file_path,
                             before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
                             options="-vn",
                         )
-                    )
-                while vc.is_playing():
+
+                should_loop = loop_flag
+                while True:
+                    start_time = time.time()
+                    progress_msg = None
+                    if announce_message:
+                        if not title:
+                            title = "Audio"
+                        msg_txt, bar = _progress_bar(0, duration, title, video_url)
+                        progress_msg = await interaction.channel.send(msg_txt)
+                    _voice_now_playing[gid] = {
+                        "vc": vc,
+                        "start_time": start_time,
+                        "duration": duration,
+                        "title": title,
+                        "url": video_url,
+                        "message": progress_msg,
+                    }
+                    if progress_msg:
+                        _progress_tasks[gid] = asyncio.create_task(
+                            _update_progress_message(gid)
+                        )
+                    _voice_skip_flag[gid] = False
+
+                    # Play the audio
+                    audio_source = start_play()
+                    vc.play(audio_source)
+
+                    # Wait for end or skip
+                    while vc.is_playing():
+                        if _voice_skip_flag.get(gid, False):
+                            vc.stop()
+                            break
+                        await asyncio.sleep(0.5)
+
+                    # If skipping, break loop regardless of loop_flag
                     if _voice_skip_flag.get(gid, False):
-                        vc.stop()
                         break
-                    await asyncio.sleep(0.5)
+
+                    # If not looping, break
+                    if not should_loop:
+                        break
+
+                    # If looping, reset the progress message and play again
+                    if progress_msg:
+                        try:
+                            await progress_msg.delete()
+                        except Exception:
+                            pass
+                    if gid in _voice_now_playing:
+                        del _voice_now_playing[gid]
+                    t = _progress_tasks.get(gid)
+                    if t: t.cancel()
+                    _progress_tasks.pop(gid, None)
+
                 await vc.disconnect(force=True)
                 if not fut.done():
                     fut.set_result(None)
