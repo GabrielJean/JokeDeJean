@@ -28,7 +28,7 @@ async def play_audio(
     title=None,
     video_url=None,
     announce_message=True,
-    loop=False,  # <---- ADDED parameter
+    loop=False,
 ):
     from bot_instance import bot
     if not os.path.exists(file_path):
@@ -42,7 +42,7 @@ async def play_audio(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop))  # Added loop
+    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop))
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -56,7 +56,7 @@ async def play_ytdlp_stream(
     title=None,
     video_url=None,
     announce_message=True,
-    loop=False,  # <---- ADDED parameter
+    loop=False,
 ):
     from bot_instance import bot
     stream_url = info_dict.get("url")
@@ -76,7 +76,7 @@ async def play_ytdlp_stream(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop))  # Added loop
+    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop))
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
@@ -95,7 +95,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                 title,
                 video_url,
                 announce_message,
-                loop_flag,  # <--- ADDED
+                loop_flag,
             ) = await queue.get()
             try:
                 vc = discord.utils.get(bot.voice_clients, guild=guild)
@@ -115,14 +115,17 @@ async def _run_audio_queue(guild, queue, lock, gid):
                         )
 
                 should_loop = loop_flag
+                progress_msg = None
+
+                # === Only send the progress bar ONCE per play! ===
+                if announce_message:
+                    if not title:
+                        title = "Audio"
+                    msg_txt, bar = _progress_bar(0, duration, title, video_url)
+                    progress_msg = await interaction.channel.send(msg_txt)
+
                 while True:
                     start_time = time.time()
-                    progress_msg = None
-                    if announce_message:
-                        if not title:
-                            title = "Audio"
-                        msg_txt, bar = _progress_bar(0, duration, title, video_url)
-                        progress_msg = await interaction.channel.send(msg_txt)
                     _voice_now_playing[gid] = {
                         "vc": vc,
                         "start_time": start_time,
@@ -137,7 +140,7 @@ async def _run_audio_queue(guild, queue, lock, gid):
                         )
                     _voice_skip_flag[gid] = False
 
-                    # Play the audio
+                    # Play audio
                     audio_source = start_play()
                     vc.play(audio_source)
 
@@ -148,25 +151,18 @@ async def _run_audio_queue(guild, queue, lock, gid):
                             break
                         await asyncio.sleep(0.5)
 
-                    # If skipping, break loop regardless of loop_flag
-                    if _voice_skip_flag.get(gid, False):
-                        break
-
-                    # If not looping, break
-                    if not should_loop:
-                        break
-
-                    # If looping, reset the progress message and play again
-                    if progress_msg:
-                        try:
-                            await progress_msg.delete()
-                        except Exception:
-                            pass
+                    # Clean up after each loop
+                    t = _progress_tasks.get(gid)
+                    if t:
+                        t.cancel()
+                    _progress_tasks.pop(gid, None)
                     if gid in _voice_now_playing:
                         del _voice_now_playing[gid]
-                    t = _progress_tasks.get(gid)
-                    if t: t.cancel()
-                    _progress_tasks.pop(gid, None)
+
+                    if _voice_skip_flag.get(gid, False):
+                        break
+                    if not should_loop:
+                        break
 
                 await vc.disconnect(force=True)
                 if not fut.done():
@@ -217,7 +213,7 @@ async def _update_progress_message(gid):
             await msg.edit(content=msg_txt)
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
 def _progress_bar(elapsed, duration, title, url, ended=False):
     bar_len = 20

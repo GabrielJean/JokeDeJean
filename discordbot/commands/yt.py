@@ -9,11 +9,11 @@ from concurrent.futures import ProcessPoolExecutor
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 def ytdlp_get_info(url):
-    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True}) as ydl:
+    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True, "format": "bestaudio"}) as ydl:
         return ydl.extract_info(url, download=False)
 
 def ytdlp_search(query):
-    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True}) as ydl:
+    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True, "format": "bestaudio"}) as ydl:
         return ydl.extract_info(f"ytsearch3:{query}", download=False)['entries']
 
 class StopPlaybackView(discord.ui.View):
@@ -21,7 +21,6 @@ class StopPlaybackView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.guild_id = guild_id
         self.initiator_id = initiator_id
-        self.message = None
 
     @discord.ui.button(label="⏹️ Arrêter la lecture", style=discord.ButtonStyle.danger)
     async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -55,15 +54,6 @@ class StopPlaybackView(discord.ui.View):
         for item in self.children:
             if hasattr(item, "disabled"):
                 item.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(
-                    content="⏹️ Ce bouton de contrôle a expiré (trop de temps s'est écoulé).\n"
-                            "Relancez la commande pour contrôler à nouveau.",
-                    view=self
-                )
-            except Exception:
-                pass
 
 async def setup(bot):
     @bot.tree.command(
@@ -106,13 +96,12 @@ async def setup(bot):
         video_url = info.get("webpage_url", url)
         view = StopPlaybackView(interaction.guild.id, interaction.user.id, timeout=900)
         loop_msg = " (en boucle)" if loop else ""
-        msg = await interaction.followup.send(
-            f"Lecture audio YouTube{loop_msg} lancée dans le salon vocal \n"
-            "Regardez ce salon pour une barre de progression !",
+        await interaction.followup.send(
+            f"Lecture audio YouTube{loop_msg} lancée dans le salon vocal.\n"
+            "Regardez ce salon pour la barre de progression !",
             ephemeral=True,
             view=view
         )
-        view.message = msg
         asyncio.create_task(
             play_ytdlp_stream(
                 interaction,
@@ -122,7 +111,7 @@ async def setup(bot):
                 title=video_title,
                 video_url=video_url,
                 announce_message=True,
-                loop=loop,  # Passes loop here
+                loop=loop,
             )
         )
 
@@ -211,19 +200,18 @@ async def setup(bot):
                 try:
                     info = await loop_async.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, url)
                 except Exception as exc:
-                    await select_interaction.followup.send(
+                    await select_inter_interaction.followup.send(
                         f"Erreur lors de la récupération d'info : {exc}", ephemeral=True
                     )
                     return
                 view = StopPlaybackView(select_interaction.guild.id, select_interaction.user.id, timeout=900)
                 loop_msg = " (en boucle)" if loop else ""
-                msg2 = await select_interaction.followup.send(
-                    f"Lecture de {title} - {url}{loop_msg} lancée dans le salon vocal. \n"
+                await select_interaction.followup.send(
+                    f"Lecture de {title} - {url}{loop_msg} lancée dans le salon vocal.\n"
                     "Regardez ce salon pour la barre de progression !",
                     ephemeral=True,
                     view=view
                 )
-                view.message = msg2
                 asyncio.create_task(
                     play_ytdlp_stream(
                         select_interaction,
@@ -233,7 +221,7 @@ async def setup(bot):
                         title=title,
                         video_url=url,
                         announce_message=True,
-                        loop=loop,  # Passes loop here as well
+                        loop=loop,
                     )
                 )
                 self.stop()
