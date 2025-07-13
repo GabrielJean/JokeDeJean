@@ -61,11 +61,6 @@ async def setup(bot):
             value="Affiche le texte dans le salon texte. Param: message",
             inline=False)
         embed.add_field(
-            name="/reset-prompts",
-            value="Reset les prompts/instructions TTS.",
-            inline=False
-        )
-        embed.add_field(
             name="/history",
             value="Affiche les 15 dernières commandes (éphémère).",
             inline=False
