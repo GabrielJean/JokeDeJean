@@ -153,7 +153,7 @@ async def setup(bot):
             title = entry['title']
             url = entry['webpage_url']
             uploader = entry.get('uploader', '')
-            out_lines.append(f"**{idx}.** [{title[:80]}]({url}) (`{duration_str}`) — *{uploader[:32]}*")
+            out_lines.append(f"**{idx}.** {title[:80]} - {url} `{duration_str}` — *{uploader[:32]}*")
         out_text = "**Voici les résultats de la recherche :**\n\n" + "\n".join(out_lines)
         out_text += "\n\n**Sélectionnez la vidéo à jouer ci-dessous :**"
 
