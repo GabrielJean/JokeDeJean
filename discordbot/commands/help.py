@@ -75,5 +75,21 @@ async def setup(bot):
             value="Affiche cette aide détaillée.",
             inline=False
         )
+        # --- MISSING COMMANDS ---
+        embed.add_field(
+            name="/yt",
+            value="Joue l'audio d'une vidéo YouTube dans le vocal.\nParams: url, voice_channel",
+            inline=False
+        )
+        embed.add_field(
+            name="/ytsearch",
+            value="Recherche une vidéo YouTube et joue l'audio dans le vocal.\nParams: query, voice_channel",
+            inline=False
+        )
+        embed.add_field(
+            name="/skip",
+            value="Passe au prochain message TTS en vocal (skip la lecture actuelle).\nParams: voice_channel",
+            inline=False
+        )
         embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
         await interaction.response.send_message(embed=embed, ephemeral=True)
