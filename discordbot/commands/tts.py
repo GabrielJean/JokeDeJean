@@ -13,17 +13,13 @@ def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_field = 1024
     max_fields = 25
     max_chunk = 950
-
     embed = discord.Embed(
         title="💬 Texte prononcé en vocal"[:max_title],
         color=0x00bcff,
     )
-
-    # If message is small, put in description only, no field
     if len(message) <= max_chunk and len(message) + len(embed.title) < (max_overall - 128):
         embed.description = message
     else:
-        # Split to fields
         parts = []
         rest = message or ""
         while rest:
@@ -39,7 +35,6 @@ def build_safe_tts_embed(message: str, instructions: str, display_name: str):
                 break
         if sum(len(x) for x in parts) > max_chunk * max_fields:
             embed.add_field(name="…", value="(message coupé :trop long pour Discord embed!)", inline=False)
-
     if instructions:
         instr_val = (instructions if len(instructions) < max_field else instructions[:max_field-3] + "...")
         embed.add_field(name="Style", value=instr_val, inline=False)
@@ -62,11 +57,9 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
         max_length=250,
         placeholder="Exemple : Ton enfantin, ou accent québécois"
     )
-
     async def on_submit(self, interaction: discord.Interaction):
         msg = self.message.value.strip()
         instr = self.instructions.value.strip() if self.instructions.value else None
-
         log_command(
             interaction.user, "say_vc",
             {
@@ -76,7 +69,6 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
             },
             guild=interaction.guild
         )
-
         vc_channel = get_voice_channel(interaction)
         if not vc_channel:
             await interaction.response.send_message(
@@ -84,7 +76,6 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
                 ephemeral=True
             )
             return
-
         await interaction.response.defer(thinking=True, ephemeral=False)
         loop = asyncio.get_running_loop()
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -98,7 +89,6 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
-
             asyncio.create_task(play_audio(interaction, filename, vc_channel))
             embed = build_safe_tts_embed(msg, instr, interaction.user.display_name)
             await interaction.followup.send(embed=embed, ephemeral=False)
@@ -114,18 +104,18 @@ async def setup(bot):
         await interaction.response.send_modal(SayVCModal())
 
     @bot.tree.command(
-        name="next",
+        name="skip",
         description="Passe au prochain message TTS en vocal (skip la lecture actuelle)"
     )
     @app_commands.describe(
         voice_channel="Salon vocal cible (optionnel, sinon celui où vous êtes actuellement)"
     )
-    async def next_tts(
+    async def skip_tts(
         interaction: discord.Interaction,
         voice_channel: discord.VoiceChannel = None
     ):
         log_command(
-            interaction.user, "next",
+            interaction.user, "skip",
             {
                 "voice_channel": str(voice_channel) if voice_channel else None
             },
