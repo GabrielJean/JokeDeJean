@@ -70,7 +70,6 @@ async def setup(bot):
             value="Affiche cette aide détaillée.",
             inline=False
         )
-        # --- MISSING COMMANDS ---
         embed.add_field(
             name="/yt",
             value="Joue l'audio d'une vidéo YouTube dans le vocal.\nParams: url, voice_channel",
