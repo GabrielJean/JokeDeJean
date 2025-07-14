@@ -85,5 +85,10 @@ async def setup(bot):
             value="Passe au prochain message TTS en vocal (skip la lecture actuelle).\nParams: voice_channel",
             inline=False
         )
+        embed.add_field(
+            name="/lofi",
+            value="Joue une radio lofi chill en vocal.\nParams: voice_channel",
+            inline=False
+        )
         embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
         await interaction.response.send_message(embed=embed, ephemeral=True)
