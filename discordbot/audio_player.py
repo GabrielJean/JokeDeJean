@@ -219,7 +219,7 @@ async def _update_progress_message(gid):
             await msg.edit(content=msg_txt)
         except Exception:
             pass
-        await asyncio.sleep(1)   # Update every second now!
+        await asyncio.sleep(5)   # Update every 5 seconds instead of every second!
 
 def _progress_bar(elapsed, duration, title, url, ended=False, is_live=False):
     bar_len = 20
