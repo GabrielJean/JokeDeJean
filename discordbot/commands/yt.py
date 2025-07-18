@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 import asyncio
 import yt_dlp
+
 from audio_player import play_audio, play_ytdlp_stream, get_voice_channel, skip_audio_by_guild
 from history import log_command
 from concurrent.futures import ProcessPoolExecutor
@@ -49,7 +50,6 @@ class StopPlaybackView(discord.ui.View):
         except Exception:
             pass
         self.stop()
-
     async def on_timeout(self):
         for item in self.children:
             if hasattr(item, "disabled"):
@@ -156,10 +156,9 @@ async def setup(bot):
             title = entry['title']
             url = entry['webpage_url']
             uploader = entry.get('uploader', '')
-            out_lines.append(f"**{idx}.** {title} {url} (`{duration_str}`) — *{uploader[:32]}*")
+            out_lines.append(f"**{idx}.** {title} {url} (`{duration_str}`) — _{uploader[:32]}_")
         out_text = "**Voici les résultats de la recherche :**\n\n" + "\n".join(out_lines)
         out_text += "\n\n**Sélectionnez la vidéo à jouer ci-dessous :**"
-
         class YTSelectView(discord.ui.View):
             def __init__(self, results):
                 super().__init__(timeout=60)
@@ -182,7 +181,6 @@ async def setup(bot):
                 self.select.callback = self.select_callback
                 self.add_item(self.select)
                 self.results = results
-
             async def select_callback(self, select_interaction: discord.Interaction):
                 if select_interaction.user.id != interaction.user.id:
                     await select_interaction.response.send_message(
@@ -255,13 +253,11 @@ async def setup(bot):
         if not vc_channel:
             await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
             return
-
         try:
             info = await loop_async.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, LOFI_URL)
         except Exception as exc:
             await interaction.followup.send(f"Erreur lors de la récupération d'info : {exc}", ephemeral=True)
             return
-
         duration = info.get("duration")
         video_title = info.get("title", "Lofi")
         video_url = info.get("webpage_url", LOFI_URL)

@@ -10,6 +10,18 @@ _voice_now_playing = {}
 _voice_skip_flag = {}
 _progress_tasks = {}
 
+# Add global accessors to yt-dlp executor
+from concurrent.futures import ProcessPoolExecutor
+
+YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
+
+# You'll need to define this (likely in your main bot file too)
+def ytdlp_get_info(url):
+    import yt_dlp
+    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True, "format": "bestaudio"}) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
 def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     if hasattr(interaction.user, "voice") and interaction.user.voice and interaction.user.voice.channel:
         return interaction.user.voice.channel
@@ -61,14 +73,6 @@ async def play_ytdlp_stream(
     is_live=False
 ):
     from bot_instance import bot
-    stream_url = info_dict.get("url")
-    if not stream_url:
-        for f in reversed(info_dict.get("formats", [])):
-            if f.get("acodec") != "none" and f.get("vcodec") == "none":
-                stream_url = f.get("url")
-                break
-        if not stream_url:
-            raise RuntimeError("Aucun flux audio direct trouvé pour la vidéo.")
     guild = interaction.guild
     gid = guild.id if guild else 0
     if gid not in _voice_audio_queues:
@@ -78,126 +82,167 @@ async def play_ytdlp_stream(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((stream_url, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live))
+    # THE FIX: enqueue the YT page URL for loops so that we can re-extract stream URL each time.
+    if loop:
+        # For loop: store the YouTube page/link, NOT the resolved stream url
+        stream_identifier = info_dict.get("webpage_url") or info_dict.get("original_url")
+        if not stream_identifier:
+            # fallback: use any URL (should always have webpage_url for yt-dlp)
+            stream_identifier = info_dict.get("url")
+    else:
+        # Non-loop: use resolved stream url (won't expire in a single play)
+        stream_identifier = info_dict.get("url")
+        if not stream_identifier:
+            # fallback to best guess (very rare)
+            for f in reversed(info_dict.get("formats", [])):
+                if f.get("acodec") != "none" and f.get("vcodec") == "none":
+                    stream_identifier = f.get("url")
+                    break
+    await queue.put((stream_identifier, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live))
     if not lock.locked():
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
     await fut
 
+
 async def _run_audio_queue(guild, queue, lock, gid):
     from bot_instance import bot
-    async with lock:
-        while not queue.empty():
-            (
-                file_path,
-                fut,
-                voice_channel,
-                interaction,
-                use_stream,
-                duration,
-                title,
-                video_url,
-                announce_message,
-                loop_flag,
-                is_live,
-            ) = await queue.get()
-            try:
-                vc = discord.utils.get(bot.voice_clients, guild=guild)
-                if not vc or not vc.is_connected():
-                    vc = await voice_channel.connect()
-                elif vc.channel != voice_channel:
-                    await vc.move_to(voice_channel)
-
-                def start_play():
-                    if not use_stream:
-                        return discord.FFmpegPCMAudio(file_path)
-                    else:
-                        return discord.FFmpegPCMAudio(
-                            file_path,
-                            before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                            options="-vn",
-                        )
-
-                should_loop = loop_flag
-                progress_msg = None
-
-                # === Only send the progress bar ONCE per play! ===
-                if announce_message:
-                    if not title:
-                        title = "Audio"
-                    msg_txt, bar = _progress_bar(0, duration, title, video_url, is_live=is_live)
-                    progress_msg = await interaction.channel.send(msg_txt)
-
-                while True:
-                    start_time = time.time()
-                    _voice_now_playing[gid] = {
-                        "vc": vc,
-                        "start_time": start_time,
-                        "duration": duration,
-                        "title": title,
-                        "url": video_url,
-                        "message": progress_msg,
-                        "is_live": is_live,
-                    }
-                    if progress_msg:
-                        _progress_tasks[gid] = asyncio.create_task(
-                            _update_progress_message(gid)
-                        )
-                    _voice_skip_flag[gid] = False
-
-                    # Play audio
-                    audio_source = start_play()
-                    vc.play(audio_source)
-
-                    # Wait for end or skip
-                    while vc.is_playing():
-                        if _voice_skip_flag.get(gid, False):
-                            vc.stop()
-                            break
-                        await asyncio.sleep(0.5)
-
-                    # Clean up after each loop
-                    t = _progress_tasks.get(gid)
-                    if t:
-                        t.cancel()
-                    _progress_tasks.pop(gid, None)
-                    if gid in _voice_now_playing:
-                        del _voice_now_playing[gid]
-
-                    if _voice_skip_flag.get(gid, False):
-                        break
-                    if not should_loop:
-                        break
-
-                await vc.disconnect(force=True)
-                if not fut.done():
-                    fut.set_result(None)
-            except Exception as e:
-                if not fut.done():
-                    fut.set_exception(e)
-            finally:
-                if gid in _voice_now_playing:
-                    info = _voice_now_playing[gid]
-                    msg = info.get("message")
-                    is_live = info.get("is_live", False)
-                    if msg:
-                        elapsed = int(time.time() - info.get("start_time", time.time()))
-                        msg_txt, bar = _progress_bar(
-                            elapsed, info.get("duration"), info.get("title"), info.get("url"), ended=True, is_live=is_live
-                        )
-                        try:
-                            asyncio.create_task(msg.edit(content=msg_txt))
-                        except Exception:
-                            pass
-                    del _voice_now_playing[gid]
-                _voice_skip_flag[gid] = False
-                t = _progress_tasks.get(gid)
-                if t: t.cancel()
-                _progress_tasks.pop(gid, None)
+    while True:
+        async with lock:
+            while not queue.empty():
+                (
+                    file_path,  # Now can be a stream url or a YouTube/other page url if looping
+                    fut,
+                    voice_channel,
+                    interaction,
+                    use_stream,
+                    duration,
+                    title,
+                    video_url,
+                    announce_message,
+                    loop_flag,
+                    is_live,
+                ) = await queue.get()
                 try:
-                    if not use_stream and file_path.startswith(tempfile.gettempdir()) and os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception as ex:
-                    print(f"Audio cleanup warning: {ex}")
+                    vc = discord.utils.get(bot.voice_clients, guild=guild)
+                    if not vc or not vc.is_connected():
+                        vc = await voice_channel.connect()
+                    elif vc.channel != voice_channel:
+                        await vc.move_to(voice_channel)
+
+                    should_loop = loop_flag
+                    progress_msg = None
+                    # === Only send the progress bar ONCE per play! ===
+                    if announce_message:
+                        if not title:
+                            title = "Audio"
+                        msg_txt, bar = _progress_bar(0, duration, title, video_url, is_live=is_live)
+                        progress_msg = await interaction.channel.send(msg_txt)
+
+                    # ========== LOOP FIX (refresh stream url every loop for YT/yt-dlp) ==========
+                    while True:
+                        # For loops on yt-dlp streams, re-extract stream url per iteration!
+                        if use_stream and should_loop:
+                            url_to_play = file_path  # store YT url for loop
+                            loop_async = asyncio.get_running_loop()
+                            try:
+                                info_dict = await loop_async.run_in_executor(
+                                    YTDLP_EXECUTOR, ytdlp_get_info, url_to_play
+                                )
+                                stream_url = info_dict.get("url")
+                                if not stream_url:
+                                    for f in reversed(info_dict.get("formats", [])):
+                                        if f.get("acodec") != "none" and f.get("vcodec") == "none":
+                                            stream_url = f.get("url")
+                                            break
+                                if not stream_url:
+                                    raise RuntimeError("Aucun flux audio direct trouvé pour la vidéo (loop).")
+                                # Update metadata for this repeat loop
+                                title = info_dict.get("title", title)
+                                duration = info_dict.get("duration", duration)
+                                video_url = info_dict.get("webpage_url", video_url)
+                                is_live = bool(info_dict.get("is_live")) or info_dict.get("live_status") == "is_live"
+                                to_play = stream_url
+                            except Exception as exc:
+                                if not fut.done():
+                                    fut.set_exception(exc)
+                                break
+                        else:
+                            to_play = file_path
+
+                        start_time = time.time()
+                        _voice_now_playing[gid] = {
+                            "vc": vc,
+                            "start_time": start_time,
+                            "duration": duration,
+                            "title": title,
+                            "url": video_url,
+                            "message": progress_msg,
+                            "is_live": is_live,
+                        }
+                        if progress_msg:
+                            _progress_tasks[gid] = asyncio.create_task(
+                                _update_progress_message(gid)
+                            )
+                        _voice_skip_flag[gid] = False
+                        # Play audio
+                        def start_play():
+                            if not use_stream:
+                                return discord.FFmpegPCMAudio(to_play)
+                            else:
+                                return discord.FFmpegPCMAudio(
+                                    to_play,
+                                    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                                    options="-vn",
+                                )
+                        audio_source = start_play()
+                        vc.play(audio_source)
+                        # Wait for end or skip
+                        while vc.is_playing():
+                            if _voice_skip_flag.get(gid, False):
+                                vc.stop()
+                                break
+                            await asyncio.sleep(0.5)
+                        # Clean up after each loop
+                        t = _progress_tasks.get(gid)
+                        if t:
+                            t.cancel()
+                        _progress_tasks.pop(gid, None)
+                        if gid in _voice_now_playing:
+                            del _voice_now_playing[gid]
+                        if _voice_skip_flag.get(gid, False):
+                            break
+                        if not should_loop:
+                            break
+                    await vc.disconnect(force=True)
+                    if not fut.done():
+                        fut.set_result(None)
+                except Exception as e:
+                    if not fut.done():
+                        fut.set_exception(e)
+                finally:
+                    if gid in _voice_now_playing:
+                        info = _voice_now_playing[gid]
+                        msg = info.get("message")
+                        is_live = info.get("is_live", False)
+                        if msg:
+                            elapsed = int(time.time() - info.get("start_time", time.time()))
+                            msg_txt, bar = _progress_bar(
+                                elapsed, info.get("duration"), info.get("title"), info.get("url"), ended=True, is_live=is_live
+                            )
+                            try:
+                                asyncio.create_task(msg.edit(content=msg_txt))
+                            except Exception:
+                                pass
+                        del _voice_now_playing[gid]
+                    _voice_skip_flag[gid] = False
+                    t = _progress_tasks.get(gid)
+                    if t: t.cancel()
+                    _progress_tasks.pop(gid, None)
+                    try:
+                        if not use_stream and file_path.startswith(tempfile.gettempdir()) and os.path.exists(file_path):
+                            os.remove(file_path)
+                    except Exception as ex:
+                        print(f"Audio cleanup warning: {ex}")
 
 async def _update_progress_message(gid):
     while True:
