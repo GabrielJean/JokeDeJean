@@ -11,6 +11,10 @@ _voice_now_playing = {}
 _voice_skip_flag = {}
 _progress_tasks = {}
 
+# --- NEW: HANDLE SEEKS ---
+_voice_seek_flag = {}
+_voice_queue_running = {}
+
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 def ytdlp_get_info(url):
@@ -44,15 +48,21 @@ async def play_audio(
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
     gid = guild.id if guild else 0
+
     if gid not in _voice_audio_queues:
         _voice_audio_queues[gid] = asyncio.Queue()
     if gid not in _voice_locks:
         _voice_locks[gid] = asyncio.Lock()
+
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live))
-    asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
+    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live, 0))
+
+    if not _voice_queue_running.get(gid):
+        _voice_queue_running[gid] = True
+        asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
+
     await fut
 
 async def play_ytdlp_stream(
@@ -70,14 +80,16 @@ async def play_ytdlp_stream(
     from bot_instance import bot
     guild = interaction.guild
     gid = guild.id if guild else 0
+
     if gid not in _voice_audio_queues:
         _voice_audio_queues[gid] = asyncio.Queue()
     if gid not in _voice_locks:
         _voice_locks[gid] = asyncio.Lock()
+
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    # THE FIX: enqueue the YT page URL for loops so that we can re-extract stream URL each time.
+    # Add seek_pos=0 at the end
     if loop:
         stream_identifier = info_dict.get("webpage_url") or info_dict.get("original_url", info_dict.get("url"))
     else:
@@ -87,31 +99,35 @@ async def play_ytdlp_stream(
                 if f.get("acodec") != "none" and f.get("vcodec") == "none":
                     stream_identifier = f.get("url")
                     break
-    await queue.put((stream_identifier, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live))
-    asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
+    await queue.put((stream_identifier, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live, 0))
+
+    if not _voice_queue_running.get(gid):
+        _voice_queue_running[gid] = True
+        asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
+
     await fut
 
 async def _run_audio_queue(guild, queue, lock, gid):
-    # Dispatcher loop: pops & launches playback tasks as needed.
-    while True:
-        async with lock:
-            if queue.empty():
-                break
-            item = await queue.get()
-        # Process the audio OUTSIDE the lock, so event loop never blocks on lock!
-        await _process_audio_item(guild, gid, item)
+    try:
+        while True:
+            async with lock:
+                if queue.empty():
+                    break
+                item = await queue.get()
+            await _process_audio_item(guild, gid, item)
+    finally:
+        _voice_queue_running[gid] = False
 
 async def _process_audio_item(guild, gid, item):
     from bot_instance import bot
     (
         file_path, fut, voice_channel, interaction,
         use_stream, duration, title, video_url,
-        announce_message, loop_flag, is_live
+        announce_message, loop_flag, is_live, seek_pos
     ) = item
     vc = None
     progress_msg = None
     try:
-        # Voice connection logic
         vc = discord.utils.get(bot.voice_clients, guild=guild)
         if not vc or not vc.is_connected():
             vc = await voice_channel.connect()
@@ -119,15 +135,15 @@ async def _process_audio_item(guild, gid, item):
             await vc.move_to(voice_channel)
 
         should_loop = loop_flag
-
         if announce_message:
             disp_title = title or "Audio"
             msg_txt, bar = _progress_bar(0, duration, disp_title, video_url, is_live=is_live)
             progress_msg = await interaction.channel.send(msg_txt)
+
         loop_async = asyncio.get_running_loop()
-        # LOOP/AUDIO PLAY LOOP
+        base_seek = seek_pos
         while True:
-            # For loops on yt-dlp streams, re-extract URL per iteration
+            # yt-dlp url re-extraction for looping
             if use_stream and should_loop:
                 url_to_play = file_path
                 try:
@@ -142,7 +158,6 @@ async def _process_audio_item(guild, gid, item):
                                 break
                     if not stream_url:
                         raise RuntimeError("Aucun flux audio direct trouvé pour la vidéo (loop).")
-                    # Update metadata for this repeat loop
                     if info_dict.get("title"): title = info_dict.get("title", title)
                     if info_dict.get("duration"): duration = info_dict.get("duration", duration)
                     video_url = info_dict.get("webpage_url", video_url)
@@ -155,39 +170,80 @@ async def _process_audio_item(guild, gid, item):
             else:
                 to_play = file_path
 
-            start_time = time.time()
+            seek_offset = base_seek
+            base_seek = 0  # only for first play/seek
+            start_time = time.time() - seek_offset
             _voice_now_playing[gid] = {
                 "vc": vc,
-                "start_time": start_time,
+                "start_time": time.time() - seek_offset,
                 "duration": duration,
                 "title": title,
                 "url": video_url,
                 "message": progress_msg,
                 "is_live": is_live,
+                "offset": seek_offset,
+                "playing_file_path": to_play,
+                "use_stream": use_stream,
+                "loop_flag": loop_flag
             }
             if progress_msg:
                 _progress_tasks[gid] = asyncio.create_task(_update_progress_message(gid))
             _voice_skip_flag[gid] = False
+            _voice_seek_flag[gid] = 0
 
-            # Play audio
+            # Make sure not to double play
+            if vc.is_playing():
+                vc.stop()
+                for _ in range(20):
+                    if not vc.is_playing():
+                        break
+                    await asyncio.sleep(0.1)
+
             def start_play():
+                # --- SEEK support via -ss for ffmpeg ---
+                offset = seek_offset or 0
+                ss = f"-ss {offset}" if offset > 0 else ""
                 if not use_stream:
-                    return discord.FFmpegPCMAudio(to_play)
+                    return discord.FFmpegPCMAudio(
+                        to_play,
+                        before_options=ss,
+                    )
                 else:
                     return discord.FFmpegPCMAudio(
                         to_play,
-                        before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                        before_options=f"{ss} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5".strip(),
                         options="-vn",
                     )
             audio_source = start_play()
-            vc.play(audio_source)
+            try:
+                vc.play(audio_source)
+            except discord.errors.ClientException as e:
+                if not fut.done():
+                    fut.set_exception(e)
+                break
 
+            # --- Playback/SEEK loop ---
+            elapsed = seek_offset or 0
             while vc.is_playing():
                 if _voice_skip_flag.get(gid, False):
                     vc.stop()
                     break
+                # --- SEEK/skip logic ---
+                seek_jump = _voice_seek_flag.get(gid, 0)
+                if seek_jump:
+                    # If there's an active seek, stop, update, and replay at new timestamp
+                    elapsed = int(time.time() - _voice_now_playing[gid]["start_time"]) + seek_jump
+                    if duration:
+                        elapsed = max(0, min(elapsed, duration-1))
+                    _voice_seek_flag[gid] = 0
+                    # Requeue to play at new position
+                    await _voice_audio_queues[gid].put(
+                        (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop_flag, is_live, elapsed)
+                    )
+                    vc.stop()
+                    return
                 await asyncio.sleep(0.5)
-            # Clean up after each loop
+
             t = _progress_tasks.get(gid)
             if t: t.cancel()
             _progress_tasks.pop(gid, None)
@@ -197,7 +253,6 @@ async def _process_audio_item(guild, gid, item):
                 break
             if not should_loop:
                 break
-        # Timeout for disconnect for extra safety
         try:
             await asyncio.wait_for(vc.disconnect(force=True), timeout=10)
         except asyncio.TimeoutError:
@@ -223,6 +278,7 @@ async def _process_audio_item(guild, gid, item):
                     pass
             del _voice_now_playing[gid]
         _voice_skip_flag[gid] = False
+        _voice_seek_flag[gid] = 0
         t = _progress_tasks.get(gid)
         if t: t.cancel()
         _progress_tasks.pop(gid, None)
@@ -295,3 +351,15 @@ def skip_audio_by_guild(guild_id):
         _voice_skip_flag[gid] = True
         return True
     return False
+
+# --- SEEK CONTROL API ---
+def seek_audio_by_guild(guild_id, seconds: int):
+    """Request player to seek by +seconds (forward) or -seconds (rewind), returns new position or None if not possible."""
+    info = _voice_now_playing.get(guild_id)
+    if not info or info.get("is_live") or not info.get("duration"):
+        return None  # Cannot seek if nothing is playing, or live, or unknown duration
+    # calculate new elapsed
+    now = int(time.time() - info["start_time"]) + (info.get('offset') or 0)
+    new_pos = max(0, min(now + seconds, info["duration"] - 1))
+    _voice_seek_flag[guild_id] = new_pos - now
+    return new_pos
