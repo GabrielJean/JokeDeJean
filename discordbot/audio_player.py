@@ -9,10 +9,8 @@ _voice_audio_queues = {}
 _voice_locks = {}
 _voice_now_playing = {}
 _voice_skip_flag = {}
-_progress_tasks = {}
-
-# --- NEW: HANDLE SEEKS ---
 _voice_seek_flag = {}
+_progress_tasks = {}
 _voice_queue_running = {}
 
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
@@ -57,6 +55,7 @@ async def play_audio(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
+    # Note: last param seek_pos is always 0 for play_audio
     await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live, 0))
 
     if not _voice_queue_running.get(gid):
@@ -89,7 +88,7 @@ async def play_ytdlp_stream(
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    # Add seek_pos=0 at the end
+    # Note: last param seek_pos is always 0 for fresh play
     if loop:
         stream_identifier = info_dict.get("webpage_url") or info_dict.get("original_url", info_dict.get("url"))
     else:
@@ -170,9 +169,8 @@ async def _process_audio_item(guild, gid, item):
             else:
                 to_play = file_path
 
-            seek_offset = base_seek
+            seek_offset = base_seek or 0
             base_seek = 0  # only for first play/seek
-            start_time = time.time() - seek_offset
             _voice_now_playing[gid] = {
                 "vc": vc,
                 "start_time": time.time() - seek_offset,
@@ -222,26 +220,27 @@ async def _process_audio_item(guild, gid, item):
                     fut.set_exception(e)
                 break
 
-            # --- Playback/SEEK loop ---
-            elapsed = seek_offset or 0
-            while vc.is_playing():
+            # --- Playback/Skip/Seek loop ---
+            while vc.is_connected():
+                # Always break if we're skipping or finished
                 if _voice_skip_flag.get(gid, False):
-                    vc.stop()
+                    if vc.is_playing():
+                        vc.stop()
                     break
-                # --- SEEK/skip logic ---
                 seek_jump = _voice_seek_flag.get(gid, 0)
                 if seek_jump:
-                    # If there's an active seek, stop, update, and replay at new timestamp
                     elapsed = int(time.time() - _voice_now_playing[gid]["start_time"]) + seek_jump
                     if duration:
                         elapsed = max(0, min(elapsed, duration-1))
                     _voice_seek_flag[gid] = 0
-                    # Requeue to play at new position
                     await _voice_audio_queues[gid].put(
                         (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop_flag, is_live, elapsed)
                     )
-                    vc.stop()
+                    if vc.is_playing():
+                        vc.stop()
                     return
+                if not vc.is_playing():
+                    break
                 await asyncio.sleep(0.5)
 
             t = _progress_tasks.get(gid)
@@ -334,31 +333,29 @@ def skip_audio(voice_channel: discord.VoiceChannel):
     gid = voice_channel.guild.id if voice_channel else None
     if gid is None:
         return False
-    vc = _voice_now_playing.get(gid)
-    if vc and isinstance(vc, dict):
-        vc = vc.get("vc")
-    if vc and vc.is_connected() and vc.is_playing():
-        _voice_skip_flag[gid] = True
-        return True
+    info = _voice_now_playing.get(gid)
+    if info and isinstance(info, dict):
+        vc = info.get("vc")
+        if vc and vc.is_connected():
+            _voice_skip_flag[gid] = True
+            return True
     return False
 
 def skip_audio_by_guild(guild_id):
     gid = guild_id
-    vc = _voice_now_playing.get(gid)
-    if vc and isinstance(vc, dict):
-        vc = vc.get("vc")
-    if vc and vc.is_connected() and vc.is_playing():
-        _voice_skip_flag[gid] = True
-        return True
+    info = _voice_now_playing.get(gid)
+    if info and isinstance(info, dict):
+        vc = info.get("vc")
+        if vc and vc.is_connected():
+            _voice_skip_flag[gid] = True
+            return True
     return False
 
-# --- SEEK CONTROL API ---
 def seek_audio_by_guild(guild_id, seconds: int):
     """Request player to seek by +seconds (forward) or -seconds (rewind), returns new position or None if not possible."""
     info = _voice_now_playing.get(guild_id)
     if not info or info.get("is_live") or not info.get("duration"):
         return None  # Cannot seek if nothing is playing, or live, or unknown duration
-    # calculate new elapsed
     now = int(time.time() - info["start_time"]) + (info.get('offset') or 0)
     new_pos = max(0, min(now + seconds, info["duration"] - 1))
     _voice_seek_flag[guild_id] = new_pos - now
