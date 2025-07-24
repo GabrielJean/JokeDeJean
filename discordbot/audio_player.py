@@ -12,7 +12,6 @@ _voice_skip_flag = {}
 _voice_seek_flag = {}
 _progress_tasks = {}
 _voice_queue_running = {}
-
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 def ytdlp_get_info(url):
@@ -29,6 +28,38 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
             return specified
     return None
 
+# ===========================
+# Seek Buttons View definition
+# ===========================
+class SeekView(discord.ui.View):
+    def __init__(self, guild_id, *, timeout=180):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="⏮️ 30s", style=discord.ButtonStyle.primary, custom_id="seek_back_30s")
+    async def back30(self, interaction: discord.Interaction, button: discord.ui.Button):
+        seek_audio_by_guild(self.guild_id, -30)
+        try:
+            await interaction.response.send_message(
+                "⏮️ Lecture reculera de 30s", ephemeral=True
+            )
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send(
+                "⏮️ Lecture reculera de 30s", ephemeral=True
+            )
+
+    @discord.ui.button(label="⏭️ 30s", style=discord.ButtonStyle.primary, custom_id="seek_fwd_30s")
+    async def fwd30(self, interaction: discord.Interaction, button: discord.ui.Button):
+        seek_audio_by_guild(self.guild_id, 30)
+        try:
+            await interaction.response.send_message(
+                "⏭️ Lecture avancera de 30s" , ephemeral=True
+            )
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send(
+                "⏭️ Lecture avancera de 30s", ephemeral=True
+            )
+
 async def play_audio(
     interaction,
     file_path,
@@ -37,7 +68,7 @@ async def play_audio(
     duration=None,
     title=None,
     video_url=None,
-    announce_message=True,
+    announce_message=False,  # Now defaults to False
     loop=False,
     is_live=False,
 ):
@@ -46,22 +77,19 @@ async def play_audio(
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
     gid = guild.id if guild else 0
-
     if gid not in _voice_audio_queues:
         _voice_audio_queues[gid] = asyncio.Queue()
     if gid not in _voice_locks:
         _voice_locks[gid] = asyncio.Lock()
-
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    # Note: last param seek_pos is always 0 for play_audio
-    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live, 0))
-
+    # Initially no message/view
+    await queue.put((file_path, fut, voice_channel, interaction, False, duration, title, video_url, announce_message, loop, is_live, 0, None, None))
+    # --- ONLY START RUNNER IF NOT RUNNING ---
     if not _voice_queue_running.get(gid):
         _voice_queue_running[gid] = True
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
-
     await fut
 
 async def play_ytdlp_stream(
@@ -72,23 +100,20 @@ async def play_ytdlp_stream(
     duration=None,
     title=None,
     video_url=None,
-    announce_message=True,
+    announce_message=False,  # Now defaults to False
     loop=False,
     is_live=False
 ):
     from bot_instance import bot
     guild = interaction.guild
     gid = guild.id if guild else 0
-
     if gid not in _voice_audio_queues:
         _voice_audio_queues[gid] = asyncio.Queue()
     if gid not in _voice_locks:
         _voice_locks[gid] = asyncio.Lock()
-
     queue = _voice_audio_queues[gid]
     lock = _voice_locks[gid]
     fut = asyncio.get_event_loop().create_future()
-    # Note: last param seek_pos is always 0 for fresh play
     if loop:
         stream_identifier = info_dict.get("webpage_url") or info_dict.get("original_url", info_dict.get("url"))
     else:
@@ -98,12 +123,11 @@ async def play_ytdlp_stream(
                 if f.get("acodec") != "none" and f.get("vcodec") == "none":
                     stream_identifier = f.get("url")
                     break
-    await queue.put((stream_identifier, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live, 0))
-
+    await queue.put((stream_identifier, fut, voice_channel, interaction, True, duration, title, video_url, announce_message, loop, is_live, 0, None, None))
+    # --- ONLY START RUNNER IF NOT RUNNING ---
     if not _voice_queue_running.get(gid):
         _voice_queue_running[gid] = True
         asyncio.create_task(_run_audio_queue(guild, queue, lock, gid))
-
     await fut
 
 async def _run_audio_queue(guild, queue, lock, gid):
@@ -122,23 +146,26 @@ async def _process_audio_item(guild, gid, item):
     (
         file_path, fut, voice_channel, interaction,
         use_stream, duration, title, video_url,
-        announce_message, loop_flag, is_live, seek_pos
+        announce_message, loop_flag, is_live, seek_pos,
+        progress_msg, seek_view
     ) = item
     vc = None
-    progress_msg = None
     try:
         vc = discord.utils.get(bot.voice_clients, guild=guild)
         if not vc or not vc.is_connected():
             vc = await voice_channel.connect()
         elif vc.channel != voice_channel:
             await vc.move_to(voice_channel)
-
         should_loop = loop_flag
-        if announce_message:
+        # Only create a new progress bar announcement if one doesn't exist!
+        if progress_msg is None and announce_message:
             disp_title = title or "Audio"
             msg_txt, bar = _progress_bar(0, duration, disp_title, video_url, is_live=is_live)
-            progress_msg = await interaction.channel.send(msg_txt)
-
+            view = None
+            if not is_live and (duration and duration > 0):
+                view = SeekView(guild.id)
+            progress_msg = await interaction.channel.send(msg_txt, view=view)
+            seek_view = view
         loop_async = asyncio.get_running_loop()
         base_seek = seek_pos
         while True:
@@ -168,9 +195,8 @@ async def _process_audio_item(guild, gid, item):
                     break
             else:
                 to_play = file_path
-
             seek_offset = base_seek or 0
-            base_seek = 0  # only for first play/seek
+            base_seek = 0
             _voice_now_playing[gid] = {
                 "vc": vc,
                 "start_time": time.time() - seek_offset,
@@ -182,23 +208,21 @@ async def _process_audio_item(guild, gid, item):
                 "offset": seek_offset,
                 "playing_file_path": to_play,
                 "use_stream": use_stream,
-                "loop_flag": loop_flag
+                "loop_flag": loop_flag,
+                "seek_view": seek_view,
             }
             if progress_msg:
                 _progress_tasks[gid] = asyncio.create_task(_update_progress_message(gid))
             _voice_skip_flag[gid] = False
             _voice_seek_flag[gid] = 0
-
-            # Make sure not to double play
+            # Only play if not playing already
             if vc.is_playing():
                 vc.stop()
                 for _ in range(20):
                     if not vc.is_playing():
                         break
                     await asyncio.sleep(0.1)
-
             def start_play():
-                # --- SEEK support via -ss for ffmpeg ---
                 offset = seek_offset or 0
                 ss = f"-ss {offset}" if offset > 0 else ""
                 if not use_stream:
@@ -219,10 +243,8 @@ async def _process_audio_item(guild, gid, item):
                 if not fut.done():
                     fut.set_exception(e)
                 break
-
-            # --- Playback/Skip/Seek loop ---
+            # Playback/Skip/Seek logic
             while vc.is_connected():
-                # Always break if we're skipping or finished
                 if _voice_skip_flag.get(gid, False):
                     if vc.is_playing():
                         vc.stop()
@@ -234,7 +256,7 @@ async def _process_audio_item(guild, gid, item):
                         elapsed = max(0, min(elapsed, duration-1))
                     _voice_seek_flag[gid] = 0
                     await _voice_audio_queues[gid].put(
-                        (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop_flag, is_live, elapsed)
+                        (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop_flag, is_live, elapsed, progress_msg, seek_view)
                     )
                     if vc.is_playing():
                         vc.stop()
@@ -242,7 +264,6 @@ async def _process_audio_item(guild, gid, item):
                 if not vc.is_playing():
                     break
                 await asyncio.sleep(0.5)
-
             t = _progress_tasks.get(gid)
             if t: t.cancel()
             _progress_tasks.pop(gid, None)
@@ -266,13 +287,14 @@ async def _process_audio_item(guild, gid, item):
             info = _voice_now_playing[gid]
             msg = info.get("message")
             is_live = info.get("is_live", False)
+            seek_view = info.get("seek_view")
             if msg:
                 elapsed = int(time.time() - info.get("start_time", time.time()))
                 msg_txt, bar = _progress_bar(
                     elapsed, info.get("duration"), info.get("title"), info.get("url"), ended=True, is_live=is_live
                 )
                 try:
-                    asyncio.create_task(msg.edit(content=msg_txt))
+                    asyncio.create_task(msg.edit(content=msg_txt, view=None if is_live or not info.get("duration") else seek_view))
                 except Exception:
                     pass
             del _voice_now_playing[gid]
@@ -292,6 +314,7 @@ async def _update_progress_message(gid):
         info = _voice_now_playing.get(gid)
         if not info: break
         msg = info.get("message")
+        seek_view = info.get("seek_view")
         duration = info.get("duration")
         start = info.get("start_time")
         title = info.get("title")
@@ -304,7 +327,10 @@ async def _update_progress_message(gid):
             msg_txt, bar = _progress_bar(
                 elapsed, duration, title, video_url, is_live=is_live
             )
-            await msg.edit(content=msg_txt)
+            view = None
+            if not is_live and duration:
+                view = seek_view
+            await msg.edit(content=msg_txt, view=view)
         except Exception:
             pass
         await asyncio.sleep(5)

@@ -3,7 +3,11 @@ from discord import app_commands
 import time
 from history import log_command
 
+# VC block dict
 _vc_blocks = {}  # (guild_id, channel_id): {user_id: until_ts}
+
+# -- Import your audio queue data from your main player module --
+from audio_player import _voice_audio_queues, _voice_now_playing
 
 async def setup(bot):
     @bot.tree.command(name="bloque", description="Bloque le bot pour 2h de rejoindre ton vocal actuel")
@@ -44,3 +48,55 @@ async def setup(bot):
         else:
             await interaction.response.send_message(
                 f"Ce salon n’était pas bloqué par toi !", ephemeral=True)
+
+    @bot.tree.command(name="queue", description="Affiche la file d'attente vocale")
+    async def queue(interaction: discord.Interaction):
+        log_command(interaction.user, "queue", {}, guild=interaction.guild)
+        guild = interaction.guild
+        gid = guild.id if guild else 0
+        description_lines = []
+
+        # --- Now playing
+        now = _voice_now_playing.get(gid)
+        if now:
+            title = now.get("title") or "Audio"
+            url = now.get("url") or ""
+            user = getattr(getattr(now.get("interaction"), "user", None), "display_name", None)
+            if not user:
+                user = getattr(getattr(now.get("interaction"), "user", None), "name", None)
+            added_by = f"Ajouté par `{user}`" if user else "(inconnu·e)"
+            cur_line = f"**En cours :** [{title}]({url}) {added_by}" if url else f"**En cours :** {title} {added_by}"
+            description_lines.append(cur_line)
+
+        # --- Queue
+        q = _voice_audio_queues.get(gid)
+        if q is None or q.empty():
+            if not description_lines:
+                await interaction.response.send_message("Aucune musique en attente dans la file.", ephemeral=True)
+                return
+        else:
+            queue_items = []
+            queue_data = list(q._queue)  # Direct access is OK for listing snapshots
+            for ix, item in enumerate(queue_data):
+                # Unpack as per your structure:
+                # (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop, is_live, seek_pos, progress_msg, seek_view)
+                file_path = item[0]
+                interaction_added = item[3]
+                title = (item[6] or "Audio")
+                url = item[7]
+                user = getattr(getattr(interaction_added, "user", None), "display_name", None)
+                if not user:
+                    user = getattr(getattr(interaction_added, "user", None), "name", None)
+                added_by = f"par `{user}`" if user else "(Ajout par inconnu·e)"
+                if url:
+                    queue_items.append(f"{ix+1}. [{title}]({url}) {added_by}")
+                else:
+                    queue_items.append(f"{ix+1}. {title} {added_by}")
+            description_lines.append("**File d'attente :**\n" + "\n".join(queue_items))
+
+        embed = discord.Embed(
+            title="🎶 File d'attente musicale",
+            description="\n\n".join(description_lines),
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
