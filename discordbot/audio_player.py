@@ -333,7 +333,7 @@ async def _update_progress_message(gid):
             await msg.edit(content=msg_txt, view=view)
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)   # Changed from 5 to 15 seconds
 
 def _progress_bar(elapsed, duration, title, url, ended=False, is_live=False):
     bar_len = 20
