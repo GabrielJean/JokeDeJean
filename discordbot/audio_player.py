@@ -12,6 +12,7 @@ _voice_skip_flag = {}
 _voice_seek_flag = {}
 _progress_tasks = {}
 _voice_queue_running = {}
+
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 def ytdlp_get_info(url):
@@ -29,6 +30,22 @@ def get_voice_channel(interaction, specified: discord.VoiceChannel = None):
     return None
 
 # ===========================
+# Stop Button View definition
+# ===========================
+class StopView(discord.ui.View):
+    def __init__(self, guild_id, *, timeout=180):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="⏹️ Stop", style=discord.ButtonStyle.danger, custom_id="stop_audio")
+    async def stop_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        skip_audio_by_guild(self.guild_id)
+        try:
+            await interaction.response.send_message("⏹️ Lecture stoppée !", ephemeral=True)
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send("⏹️ Lecture stoppée !", ephemeral=True)
+
+# ===========================
 # Seek Buttons View definition
 # ===========================
 class SeekView(discord.ui.View):
@@ -40,25 +57,67 @@ class SeekView(discord.ui.View):
     async def back30(self, interaction: discord.Interaction, button: discord.ui.Button):
         seek_audio_by_guild(self.guild_id, -30)
         try:
-            await interaction.response.send_message(
-                "⏮️ Lecture reculera de 30s", ephemeral=True
-            )
+            await interaction.response.send_message("⏮️ Lecture reculera de 30s", ephemeral=True)
         except discord.errors.InteractionResponded:
-            await interaction.followup.send(
-                "⏮️ Lecture reculera de 30s", ephemeral=True
-            )
+            await interaction.followup.send("⏮️ Lecture reculera de 30s", ephemeral=True)
 
     @discord.ui.button(label="⏭️ 30s", style=discord.ButtonStyle.primary, custom_id="seek_fwd_30s")
     async def fwd30(self, interaction: discord.Interaction, button: discord.ui.Button):
         seek_audio_by_guild(self.guild_id, 30)
         try:
-            await interaction.response.send_message(
-                "⏭️ Lecture avancera de 30s" , ephemeral=True
-            )
+            await interaction.response.send_message("⏭️ Lecture avancera de 30s", ephemeral=True)
         except discord.errors.InteractionResponded:
-            await interaction.followup.send(
-                "⏭️ Lecture avancera de 30s", ephemeral=True
-            )
+            await interaction.followup.send("⏭️ Lecture avancera de 30s", ephemeral=True)
+
+# ===========================
+# Progress View with Both Seek & Stop
+# ===========================
+class ProgressView(discord.ui.View):
+    def __init__(self, guild_id, *, duration=None, is_live=False, timeout=180):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.is_live = is_live
+        # Show seek buttons only if not live and there is a duration
+        if not is_live and duration and duration > 0:
+            self.add_item(Seek30Back(guild_id))
+            self.add_item(Seek30Fwd(guild_id))
+        self.add_item(StopAudioBtn(guild_id))
+
+class Seek30Back(discord.ui.Button):
+    def __init__(self, guild_id):
+        super().__init__(style=discord.ButtonStyle.primary, label="⏮️ 30s", custom_id=f"seek_back_30s_{guild_id}")
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        seek_audio_by_guild(self.guild_id, -30)
+        try:
+            await interaction.response.send_message("⏮️ Lecture reculera de 30s", ephemeral=True)
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send("⏮️ Lecture reculera de 30s", ephemeral=True)
+
+class Seek30Fwd(discord.ui.Button):
+    def __init__(self, guild_id):
+        super().__init__(style=discord.ButtonStyle.primary, label="⏭️ 30s", custom_id=f"seek_fwd_30s_{guild_id}")
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        seek_audio_by_guild(self.guild_id, 30)
+        try:
+            await interaction.response.send_message("⏭️ Lecture avancera de 30s", ephemeral=True)
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send("⏭️ Lecture avancera de 30s", ephemeral=True)
+
+class StopAudioBtn(discord.ui.Button):
+    def __init__(self, guild_id):
+        super().__init__(style=discord.ButtonStyle.danger, label="⏹️ Stop", custom_id=f"stop_audio_{guild_id}")
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        skip_audio_by_guild(self.guild_id)
+        try:
+            await interaction.response.send_message("⏹️ Lecture stoppée !", ephemeral=True)
+        except discord.errors.InteractionResponded:
+            await interaction.followup.send("⏹️ Lecture stoppée !", ephemeral=True)
 
 async def play_audio(
     interaction,
@@ -161,9 +220,7 @@ async def _process_audio_item(guild, gid, item):
         if progress_msg is None and announce_message:
             disp_title = title or "Audio"
             msg_txt, bar = _progress_bar(0, duration, disp_title, video_url, is_live=is_live)
-            view = None
-            if not is_live and (duration and duration > 0):
-                view = SeekView(guild.id)
+            view = ProgressView(guild.id, duration=duration, is_live=is_live)
             progress_msg = await interaction.channel.send(msg_txt, view=view)
             seek_view = view
         loop_async = asyncio.get_running_loop()
