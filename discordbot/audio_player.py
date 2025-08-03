@@ -308,16 +308,47 @@ async def _process_audio_item(guild, gid, item):
                     break
                 seek_jump = _voice_seek_flag.get(gid, 0)
                 if seek_jump:
-                    elapsed = int(time.time() - _voice_now_playing[gid]["start_time"]) + seek_jump
+                    current_elapsed = int(time.time() - _voice_now_playing[gid]["start_time"])
+                    new_elapsed = current_elapsed + seek_jump
                     if duration:
-                        elapsed = max(0, min(elapsed, duration-1))
+                        new_elapsed = max(0, min(new_elapsed, duration-1))
                     _voice_seek_flag[gid] = 0
-                    await _voice_audio_queues[gid].put(
-                        (file_path, fut, voice_channel, interaction, use_stream, duration, title, video_url, announce_message, loop_flag, is_live, elapsed, progress_msg, seek_view)
-                    )
+                    
+                    # Stop current playback
                     if vc.is_playing():
                         vc.stop()
-                    return
+                        # Wait for it to actually stop
+                        for _ in range(20):
+                            if not vc.is_playing():
+                                break
+                            await asyncio.sleep(0.1)
+                    
+                    # Update the start time to reflect the new position
+                    _voice_now_playing[gid]["start_time"] = time.time() - new_elapsed
+                    _voice_now_playing[gid]["offset"] = new_elapsed
+                    
+                    # Create new audio source with the seek position
+                    def create_seek_audio():
+                        ss = f"-ss {new_elapsed}" if new_elapsed > 0 else ""
+                        if not use_stream:
+                            return discord.FFmpegPCMAudio(
+                                to_play,
+                                before_options=ss,
+                            )
+                        else:
+                            return discord.FFmpegPCMAudio(
+                                to_play,
+                                before_options=f"{ss} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5".strip(),
+                                options="-vn",
+                            )
+                    
+                    # Start playing from the new position
+                    try:
+                        seek_audio_source = create_seek_audio()
+                        vc.play(seek_audio_source)
+                    except discord.errors.ClientException:
+                        # If we can't create the new source, continue with the original logic
+                        pass
                 if not vc.is_playing():
                     break
                 await asyncio.sleep(0.5)
