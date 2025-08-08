@@ -51,17 +51,24 @@ async def on_ready():
     # Show loading status immediately
     await bot.change_presence(activity=discord.Game(name="Loading..."))
 
-    if first_ready:
-        logging.info("Loading Reddit jokes at startup...")
-        await load_reddit_jokes()
-        logging.info("Reddit jokes loaded.")
-        refresh_reddit_jokes.start()
-        first_ready = False
+    try:
+        if first_ready:
+            logging.info("Loading Reddit jokes at startup...")
+            await load_reddit_jokes()
+            logging.info("Reddit jokes loaded.")
+            refresh_reddit_jokes.start()
+            first_ready = False
 
-    from commands import setup_all_commands
-    await setup_all_commands(bot)
-    cmds = await bot.tree.sync()
-    logging.info(f"Slash commands synced: {len(cmds)} cmds.")
+        from commands import setup_all_commands
+        logging.info("Setting up all commands...")
+        await setup_all_commands(bot)
+        logging.info("Syncing slash commands...")
+        cmds = await bot.tree.sync()
+        logging.info(f"Slash commands synced: {len(cmds)} cmds.")
 
-    # Show normal status after all is ready
-    await bot.change_presence(activity=discord.Game(name="Tape /help"))
+        # Show normal status after all is ready
+        await bot.change_presence(activity=discord.Game(name="Tape /help"))
+        logging.info("Bot status set to 'Tape /help'.")
+    except Exception as e:
+        logging.exception("Exception in on_ready")
+        await bot.change_presence(activity=discord.Game(name="Erreur au démarrage"))
