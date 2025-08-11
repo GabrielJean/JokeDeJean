@@ -33,7 +33,6 @@ jobs:
           context: .
           push: true
           tags: gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
-          outputs: type=image,name=gitea.docker-1.gwebs.ca/gabriel/jokedejean,push-by-digest=true
 
       - name: Export image digest env
         run: echo "IMAGE_DIGEST=${{ steps.build.outputs.digest }}" >> $GITHUB_ENV
