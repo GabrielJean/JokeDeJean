@@ -38,29 +38,57 @@ class BotMentionCog(commands.Cog):
             })
         return chat
 
-    async def get_personality_reply(self, channel, user_message, author_name, bot_display_name):
-        history = list(self.channel_histories[channel.id])
-        history.append((author_name, user_message, False))
-        # Dynamically format the prompt with the bot's display name
-        dynamic_system_prompt = bot_system_prompt.format(bot_name=bot_display_name)
+    def build_multimodal_messages(self, dynamic_system_prompt, history, current_author, current_text, current_images):
+        # Build messages compatible with AzureOpenAI SDK chat.completions
         messages = [{"role": "system", "content": dynamic_system_prompt}]
-        messages += self.make_gpt_history(history)
+        # Prior history as plain text messages
+        for (author, content, is_bot) in history:
+            messages.append({
+                "role": "assistant" if is_bot else "user",
+                "content": f"{author}: {content}"
+            })
+        # Current user message: if images are present, use content parts
+        if current_images:
+            parts = [{"type": "text", "text": f"{current_author}: {current_text}"}] if current_text else []
+            for url in current_images:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": url}
+                })
+            messages.append({"role": "user", "content": parts})
+        else:
+            messages.append({"role": "user", "content": f"{current_author}: {current_text}"})
+        return messages
+
+    async def get_personality_reply(self, channel, user_message, author_name, bot_display_name, image_urls=None):
+        history = list(self.channel_histories[channel.id])
+        # The current user message is already appended in on_message; avoid duplicating it here.
+        # Dynamically format the prompt with the bot's display name
+        base_system_prompt = bot_system_prompt.format(bot_name=bot_display_name)
+        # Encourage concise outputs to avoid exhausting tokens on reasoning
+        dynamic_system_prompt = base_system_prompt + " Keep replies to 1–2 short sentences."
+
+        # If there are images, build a multimodal message payload; otherwise keep text-only
+        if image_urls:
+            messages = self.build_multimodal_messages(
+                dynamic_system_prompt,
+                history,
+                author_name,
+                user_message,
+                image_urls
+            )
+        else:
+            messages = [{"role": "system", "content": dynamic_system_prompt}]
+            messages += self.make_gpt_history(history)
 
         loop = asyncio.get_running_loop()
         try:
-            try:
-                reply = await asyncio.wait_for(
-                    loop.run_in_executor(None, run_gpt, messages),
-                    timeout=20
-                )
-            except TypeError:
-                flat = "\n".join(
-                    (msg["content"] for msg in messages[1:])
-                ) + f"\n{author_name}: {user_message}\n{bot_display_name}:"
-                reply = await asyncio.wait_for(
-                    loop.run_in_executor(None, run_gpt, flat, dynamic_system_prompt),
-                    timeout=20
-                )
+            # Use SDK path directly (run_gpt handles both list and string input)
+            # Keep replies short for mentions: ~250 completion tokens
+            reply = await asyncio.wait_for(
+                loop.run_in_executor(None, run_gpt, messages, None, 250),
+                timeout=30
+            )
             return reply[:500] if reply else "..."
         except Exception as ex:
             logging.error(f"GPT error on mention reply: {ex}")
@@ -83,11 +111,23 @@ class BotMentionCog(commands.Cog):
                 (message.author.display_name, message.clean_content, False)
             )
 
+            # Collect image attachment URLs if any
+            image_urls = []
+            for att in getattr(message, 'attachments', []) or []:
+                if att.content_type and att.content_type.startswith('image/'):
+                    image_urls.append(att.url)
+                else:
+                    # Fallback by extension
+                    _, ext = os.path.splitext(att.filename or "")
+                    if ext.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+                        image_urls.append(att.url)
+
             reply_text = await self.get_personality_reply(
                 message.channel,
                 message.clean_content,
                 message.author.display_name,
-                bot_display_name
+                bot_display_name,
+                image_urls=image_urls
             )
 
             self.channel_histories[message.channel.id].append(

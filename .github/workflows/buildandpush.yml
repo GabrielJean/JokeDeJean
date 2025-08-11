@@ -19,33 +19,84 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Build and push Docker image (classic)
-        run: |
-          echo "${{ secrets.GITEA_REGISTRY_PASS }}" | docker login gitea.docker-1.gwebs.ca -u "${{ secrets.GITEA_REGISTRY_USER }}" --password-stdin
-          docker build -t gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest .
-          docker push gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.docker-1.gwebs.ca
+          username: ${{ secrets.GITEA_REGISTRY_USER }}
+          password: ${{ secrets.GITEA_REGISTRY_PASS }}
 
-      - name: Pull & Restart container in Portainer
+      - name: Build and push image, capture digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
+          outputs: type=image,name=gitea.docker-1.gwebs.ca/gabriel/jokedejean,push-by-digest=true
+
+      - name: Export image digest env
+        run: echo "IMAGE_DIGEST=${{ steps.build.outputs.digest }}" >> $GITHUB_ENV
+
+      - name: Recreate container on Portainer pinned to digest
         env:
           PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+          IMAGE_REPO: gitea.docker-1.gwebs.ca/gabriel/jokedejean
+          IMAGE_DIGEST: ${{ env.IMAGE_DIGEST }}
+          ENDPOINT_ID: "2"
           CONTAINER_NAME: jokedejean
+          PORTAINER_REGISTRY_AUTH_B64: ${{ secrets.PORTAINER_REGISTRY_AUTH_B64 }}
         run: |
-          set -e
-          # Find container ID
-          container_id=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/containers/json?all=1" | jq -r '.[] | select(.Names[] | contains("/'"$CONTAINER_NAME"'")) | .Id')
-          echo "Container ID: $container_id"
-          if [ -z "$container_id" ]; then
-            echo "Container $CONTAINER_NAME not found!"
+          set -euo pipefail
+          hdr=(-H "X-API-Key: $PORTAINER_API_KEY")
+          endpoint="$ENDPOINT_ID"
+          repo="$IMAGE_REPO"
+          digest="$IMAGE_DIGEST"
+          name="$CONTAINER_NAME"
+
+          # Resolve current container ID
+          cid=$(curl -fsSL "${hdr[@]}" \
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/json?all=1" \
+            | jq -r '.[] | select(.Names[] | contains("/'"$name"'")) | .Id')
+          if [ -z "${cid:-}" ]; then
+            echo "Container $name not found on endpoint $endpoint" >&2
             exit 1
           fi
+          echo "Found container: $cid"
 
-          # Find image name and re-pull (optional but recommended)
-          image_name=$(curl -sSL -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/containers/$container_id/json" | jq -r '.Config.Image')
-          echo "Container uses image: $image_name"
-          echo "Pulling latest image (if any)..."
-          curl -sSL -X POST -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/images/create?fromImage=$image_name&tag=latest"
+          # Fetch current container spec
+          spec=$(curl -fsSL "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$cid/json")
 
-          # Restart the container
-          echo "Restarting container..."
-          curl -X POST -H "X-API-Key: $PORTAINER_API_KEY" "$PORTAINER_URL/api/endpoints/2/docker/containers/$container_id/restart"
+          cfg=$(jq '.Config' <<<"$spec")
+          host_cfg=$(jq '.HostConfig' <<<"$spec")
+          # Preserve network attachments
+          endpoints_json=$(jq -n --argjson nets "$(jq '.NetworkSettings.Networks|keys' <<<"$spec")" '$nets|reduce .[] as $n ({}; .[$n]={})')
+          networking=$(jq -n --argjson ep "$endpoints_json" '{EndpointsConfig:$ep}')
+
+          # Stop and remove old container
+          curl -fsS -X POST "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$cid/stop" || true
+          curl -fsS -X DELETE "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$cid?force=1"
+
+          # Pull the exact digest
+          auth_b64="${PORTAINER_REGISTRY_AUTH_B64:-e30=}"
+          curl -fsS -X POST "${hdr[@]}" -H "X-Registry-Auth: $auth_b64" \
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/images/create?fromImage=$repo@${digest}"
+
+          # Create new container with same config but pinned image digest
+          create_payload=$(jq -n \
+            --arg img "$repo@${digest}" \
+            --argjson cfg "$cfg" \
+            --argjson host "$host_cfg" \
+            --argjson net "$networking" \
+            '$cfg + {Image:$img} + {HostConfig:$host} + {NetworkingConfig:$net}')
+
+          curl -fsS -X POST "${hdr[@]}" -H "Content-Type: application/json" \
+            -d "$create_payload" \
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/create?name=$name"
+
+          # Start it by name
+          curl -fsS -X POST "${hdr[@]}" \
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$name/start"
+
+          echo "Recreated and started container $name with image $repo@${digest}"

@@ -232,7 +232,7 @@ async def do_roast(interaction, cible_id, intensite, details):
     try:
         texte = await asyncio.wait_for(
             loop.run_in_executor(
-                None, run_gpt, prompt_gpt, "Parle avec un accent québécois stéréotypé."
+                None, run_gpt, prompt_gpt, "Parle avec un accent québécois stéréotypé.", 250
             ),
             timeout=18
         )

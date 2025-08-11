@@ -7,6 +7,10 @@ import os
 with open("config.json", "r") as f:
     config = json.load(f)
 
+# Allow environment variables to override secrets so they are not hard-coded
+config["token"] = os.getenv("DISCORD_TOKEN", config.get("token", ""))
+config["api_key"] = os.getenv("AZURE_OPENAI_API_KEY", config.get("api_key", ""))
+
 # Ensure the log file exists
 log_dir = os.path.dirname("./data/bot.log")
 os.makedirs(log_dir, exist_ok=True)
@@ -57,14 +61,15 @@ async def on_ready():
             await load_reddit_jokes()
             logging.info("Reddit jokes loaded.")
             refresh_reddit_jokes.start()
-            first_ready = False
 
-        from commands import setup_all_commands
-        logging.info("Setting up all commands...")
-        await setup_all_commands(bot)
-        logging.info("Syncing slash commands...")
-        cmds = await bot.tree.sync()
-        logging.info(f"Slash commands synced: {len(cmds)} cmds.")
+            from commands import setup_all_commands
+            logging.info("Setting up all commands (first run)...")
+            await setup_all_commands(bot)
+            logging.info("Syncing slash commands (first run)...")
+            cmds = await bot.tree.sync()
+            logging.info(f"Slash commands synced: {len(cmds)} cmds.")
+
+            first_ready = False
 
         # Show normal status after all is ready
         await bot.change_presence(activity=discord.Game(name="Tape /help"))

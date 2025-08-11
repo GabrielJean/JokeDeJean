@@ -230,7 +230,7 @@ async def do_compliment(interaction, cible_id, intensite, details):
     try:
         texte = await asyncio.wait_for(
             loop.run_in_executor(
-                None, run_gpt, prompt_gpt, "Compliments québécois."
+                None, run_gpt, prompt_gpt, "Compliments québécois.", 250
             ),
             timeout=18
         )

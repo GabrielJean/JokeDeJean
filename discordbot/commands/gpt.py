@@ -14,9 +14,9 @@ DEFAULT_GPT_PROMPT = (
 
 # -------- GPT Interactive View and Modal --------
 
-class GPTQuestionModal(discord.ui.Modal, title="Pose une question à GPT-4o"):
-    def __init__(self, parent_view):
-        super().__init__()
+class GPTQuestionModal(discord.ui.Modal):
+    def __init__(self, parent_view, bot_name: str):
+        super().__init__(title=f"Pose une question à {bot_name}")
         self.parent_view = parent_view
 
         self.question = discord.ui.TextInput(
@@ -49,11 +49,11 @@ class GPTQuestionModal(discord.ui.Modal, title="Pose une question à GPT-4o"):
 
 class GPTEditButton(discord.ui.Button):
     def __init__(self, parent_view):
-        super().__init__(label="📝 Modifier Question & Prompt", style=discord.ButtonStyle.primary)
+        super().__init__(label="📝 Modifier Question \u0026 Prompt", style=discord.ButtonStyle.primary)
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(GPTQuestionModal(self.parent_view))
+        await interaction.response.send_modal(GPTQuestionModal(self.parent_view, self.parent_view.bot_display_name))
 
 class LectureVocaleSelect(discord.ui.Select):
     def __init__(self, parent_view):
@@ -77,7 +77,8 @@ class LectureVocaleSelect(discord.ui.Select):
 
 class GPTSubmitButton(discord.ui.Button):
     def __init__(self, parent_view):
-        super().__init__(label="💡 Envoyer à GPT-4o !", style=discord.ButtonStyle.success, disabled=True)
+        label = f"💡 Envoyer à {parent_view.bot_display_name} !"
+        super().__init__(label=label, style=discord.ButtonStyle.success, disabled=True)
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
@@ -101,6 +102,12 @@ class GPTView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.bot = bot
         self.interaction = interaction
+        # Resolve bot display name for this context
+        if interaction.guild:
+            me = interaction.guild.get_member(bot.user.id)
+            self.bot_display_name = me.display_name if me else bot.user.display_name
+        else:
+            self.bot_display_name = bot.user.display_name
 
         # Data
         self.question = ""
@@ -122,7 +129,7 @@ class GPTView(discord.ui.View):
         self.add_item(self.valide_button)
 
     def build_content(self):
-        res = ["**Pose une question à GPT-4o !**\n"]
+        res = [f"**Pose une question à {self.bot_display_name} !**"]
         res.append(f"**Question:** {self.question or '_Aucune question renseignée._'}")
         if self.prompt:
             res.append(f"**Prompt système personnalisé :**\n> _{self.prompt}_")
@@ -157,13 +164,22 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
         },
         guild=interaction.guild
     )
-    await interaction.followup.send("Envoi à GPT-4o...", ephemeral=True)
+    # Determine bot display name for messages
+    if interaction.guild:
+        me = interaction.guild.get_member(interaction.client.user.id)
+        bot_display_name = me.display_name if me else interaction.client.user.display_name
+    else:
+        bot_display_name = interaction.client.user.display_name
+    await interaction.followup.send(f"Envoi à {bot_display_name}...", ephemeral=True)
     # use default prompt unless user customizes
-    system_prompt = prompt if prompt else DEFAULT_GPT_PROMPT
+    # Add concise output hint to reduce empty content on small models
+    base_system = prompt if prompt else DEFAULT_GPT_PROMPT
+    system_prompt = base_system + " Reply in 1–2 short sentences."
     loop = asyncio.get_running_loop()
     try:
+        # Allow longer answers in /gpt: ~600 completion tokens
         reply = await asyncio.wait_for(
-            loop.run_in_executor(None, run_gpt, question, system_prompt),
+            loop.run_in_executor(None, run_gpt, question, system_prompt, 600),
             timeout=22
         )
     except Exception as ex:
@@ -171,7 +187,7 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
         return
 
     # Reply as embed
-    embed = discord.Embed(title="Réponse GPT-4o",
+    embed = discord.Embed(title=f"Réponse {bot_display_name}",
                           color=0x00bcff,
                           description=f"**Q :** {question[:800]}")
     for idx, chunk in enumerate([reply[i:i+950] for i in range(0, len(reply), 950)][:25]):
@@ -207,7 +223,7 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
 async def setup(bot):
     @bot.tree.command(
         name="gpt",
-        description="Pose une question à GPT-4o en mode interactif"
+        description="Pose une question au bot en mode interactif"
     )
     async def gpt(interaction: discord.Interaction):
         view = GPTView(bot, interaction)
