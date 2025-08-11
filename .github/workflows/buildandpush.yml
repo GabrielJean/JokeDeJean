@@ -77,10 +77,11 @@ jobs:
           curl -fsS -X POST "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$cid/stop" || true
           curl -fsS -X DELETE "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$cid?force=1"
 
-          # Pull the exact digest
+          # Pull the exact digest (URL-encode '@' to %40 for the API path)
           auth_b64="${PORTAINER_REGISTRY_AUTH_B64:-e30=}"
+          from_image_encoded=$(printf '%s' "$repo@${digest}" | sed 's/@/%40/')
           curl -fsS -X POST "${hdr[@]}" -H "X-Registry-Auth: $auth_b64" \
-            "$PORTAINER_URL/api/endpoints/$endpoint/docker/images/create?fromImage=$repo@${digest}"
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/images/create?fromImage=$from_image_encoded"
 
           # Create new container with same config but pinned image digest
           create_payload=$(jq -n \
@@ -90,12 +91,18 @@ jobs:
             --argjson net "$networking" \
             '$cfg + {Image:$img} + {HostConfig:$host} + {NetworkingConfig:$net}')
 
-          curl -fsS -X POST "${hdr[@]}" -H "Content-Type: application/json" \
+          # Create and capture new container id
+          create_resp=$(curl -fsS -X POST "${hdr[@]}" -H "Content-Type: application/json" \
             -d "$create_payload" \
-            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/create?name=$name"
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/create?name=$name")
+          new_id=$(jq -r '.Id // .id // empty' <<<"$create_resp")
+          if [ -z "$new_id" ]; then
+            echo "Container create failed: $create_resp" >&2
+            exit 1
+          fi
 
-          # Start it by name
+          # Start it by id
           curl -fsS -X POST "${hdr[@]}" \
-            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$name/start"
+            "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$new_id/start"
 
-          echo "Recreated and started container $name with image $repo@${digest}"
+          echo "Recreated and started container $name with image $repo@${digest} (id=$new_id)"
