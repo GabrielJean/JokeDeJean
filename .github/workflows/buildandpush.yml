@@ -1,5 +1,5 @@
 name: Build, Push, and Redeploy Container via Portainer
-"on":
+on:
   push:
     branches:
       - main
@@ -10,18 +10,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Connect to Tailscale
         uses: tailscale/github-action@v3
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: "tag:ci"
+
       - name: Log in to registry
         uses: docker/login-action@v3
         with:
           registry: gitea.docker-1.gwebs.ca
           username: ${{ secrets.GITEA_REGISTRY_USER }}
           password: ${{ secrets.GITEA_REGISTRY_PASS }}
+
       - name: Build and push image, capture digest
         id: build
         uses: docker/build-push-action@v6
@@ -29,8 +32,10 @@ jobs:
           context: .
           push: true
           tags: gitea.docker-1.gwebs.ca/gabriel/jokedejean:latest
+
       - name: Export image digest env
         run: echo "IMAGE_DIGEST=${{ steps.build.outputs.digest }}" >> "$GITHUB_ENV"
+
       - name: Recreate container on Portainer pinned to digest
         shell: bash
         env:
@@ -99,7 +104,7 @@ jobs:
             curl -fsS -X DELETE "${hdr[@]}" "$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/$existing_by_name?force=1" || true
           fi
 
-          # Create container (handle 409 by deleting by name and retry once)
+          # Create container (Portainer may return 200 or 201)
           create_url="$PORTAINER_URL/api/endpoints/$endpoint/docker/containers/create?name=$name"
           http_code=$(curl -sS -o create.out -w "%{http_code}" -X POST "${hdr[@]}" -H "Content-Type: application/json" -d "$create_payload" "$create_url")
           if [ "$http_code" = "409" ]; then
@@ -112,7 +117,7 @@ jobs:
             http_code=$(curl -sS -o create.out -w "%{http_code}" -X POST "${hdr[@]}" -H "Content-Type: application/json" -d "$create_payload" "$create_url")
           fi
 
-          if [ "$http_code" != "201" ]; then
+          if [ "$http_code" != "201" ] && [ "$http_code" != "200" ]; then
             echo "Container create failed (code=$http_code):" >&2
             cat create.out >&2 || true
             exit 1
