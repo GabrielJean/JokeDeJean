@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 import os
+import re
 from collections import defaultdict, deque
 
 from gpt_util import run_gpt
@@ -19,57 +20,77 @@ DEFAULT_BOT_SYSTEM_PROMPT = (
     "If the moment calls for real conversation or support, be a good listener and reply appropriately, while keeping a light and friendly tone. "
     "Join in on in-jokes, refer to previous messages, and interact like a natural part of the friend group. "
     "Don’t be overly sarcastic or mean, and don’t try to force a joke into every message. "
-    "Don't explain your jokes, don't introduce yourself, just reply naturally as a friend would."
+    "Don't explain your jokes, don't introduce yourself, just reply naturally as a friend would. "
+    "User messages may be prefixed with 'Name:'. Do not include your own name or any speaker label in your replies—just write the message itself."
 )
 bot_system_prompt = config.get("bot_system_prompt", DEFAULT_BOT_SYSTEM_PROMPT)
+
 MAX_HISTORY = 15
+
 
 class BotMentionCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.channel_histories = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 
+    def strip_self_label(self, bot_display_name: str, text: str) -> str:
+        # Remove leading "BotName:" or "BotName —" etc.
+        pattern = rf"^\s*{re.escape(bot_display_name)}\s*[:\-–—]\s*"
+        cleaned = re.sub(pattern, "", text or "").strip()
+        return cleaned
+
     def make_gpt_history(self, history):
+        """
+        Convert stored (author, content, is_bot) tuples into chat messages.
+        - User messages keep 'Author: content' so the model knows who is speaking.
+        - Assistant messages are label-free to avoid the model copying its own name.
+        """
         chat = []
         for (author, content, is_bot) in history:
-            chat.append({
-                "role": "assistant" if is_bot else "user",
-                "content": f"{author}: {content}"
-            })
+            role = "assistant" if is_bot else "user"
+            msg_content = content if is_bot else f"{author}: {content}"
+            chat.append({"role": role, "content": msg_content})
         return chat
 
     def build_multimodal_messages(self, dynamic_system_prompt, history, current_author, current_text, current_images):
         # Build messages compatible with AzureOpenAI SDK chat.completions
         messages = [{"role": "system", "content": dynamic_system_prompt}]
-        # Prior history as plain text messages
+        # Prior history: assistant entries are label-free; user entries keep "Name: ..."
         for (author, content, is_bot) in history:
             messages.append({
                 "role": "assistant" if is_bot else "user",
-                "content": f"{author}: {content}"
+                "content": content if is_bot else f"{author}: {content}"
             })
-        # Current user message: if images are present, use content parts
+        # Current user message: include author label in text part so the model knows who's speaking
         if current_images:
-            parts = [{"type": "text", "text": f"{current_author}: {current_text}"}] if current_text else []
+            parts = []
+            if current_text:
+                parts.append({"type": "text", "text": f"{current_author}: {current_text}"})
             for url in current_images:
                 parts.append({
                     "type": "image_url",
                     "image_url": {"url": url}
                 })
-            messages.append({"role": "user", "content": parts})
+            if parts:
+                messages.append({"role": "user", "content": parts})
         else:
             messages.append({"role": "user", "content": f"{current_author}: {current_text}"})
         return messages
 
     async def get_personality_reply(self, channel, user_message, author_name, bot_display_name, image_urls=None):
         history = list(self.channel_histories[channel.id])
-        # The current user message is already appended in on_message; avoid duplicating it here.
+
         # Dynamically format the prompt with the bot's display name
         base_system_prompt = bot_system_prompt.format(bot_name=bot_display_name)
-        # Encourage concise outputs to avoid exhausting tokens on reasoning
-        dynamic_system_prompt = base_system_prompt + " Keep replies to 1–2 short sentences."
+        dynamic_system_prompt = (
+            base_system_prompt
+            + " Keep replies to 1–2 short sentences. Never include your own name or any speaker label in your messages; just write the message itself."
+        )
 
-        # If there are images, build a multimodal message payload; otherwise keep text-only
+        # If there are images, avoid duplicating the just-appended user text by removing it from history
         if image_urls:
+            if history and not history[-1][2] and history[-1][0] == author_name and history[-1][1] == user_message:
+                history = history[:-1]
             messages = self.build_multimodal_messages(
                 dynamic_system_prompt,
                 history,
@@ -89,7 +110,10 @@ class BotMentionCog(commands.Cog):
                 loop.run_in_executor(None, run_gpt, messages, None, 250),
                 timeout=30
             )
-            return reply[:500] if reply else "..."
+            reply = reply or "..."
+            # Remove a leading "BotName:" if model still tries to add it
+            reply = self.strip_self_label(bot_display_name, reply)
+            return reply[:500]
         except Exception as ex:
             logging.error(f"GPT error on mention reply: {ex}")
             return "Sorry, I had a brain freeze... Try again!"
@@ -107,6 +131,7 @@ class BotMentionCog(commands.Cog):
             else:
                 bot_display_name = self.bot.user.display_name
 
+            # Append current user message into history (so the model sees it for text-only)
             self.channel_histories[message.channel.id].append(
                 (message.author.display_name, message.clean_content, False)
             )
@@ -130,12 +155,14 @@ class BotMentionCog(commands.Cog):
                 image_urls=image_urls
             )
 
+            # Store assistant reply (label-free content)
             self.channel_histories[message.channel.id].append(
                 (bot_display_name, reply_text, True)
             )
 
             # Classic style: actual Discord mention
             await message.channel.send(f"{message.author.mention} {reply_text}")
+
 
 async def setup(bot):
     await bot.add_cog(BotMentionCog(bot))
