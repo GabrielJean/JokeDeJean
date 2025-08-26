@@ -5,6 +5,7 @@ import asyncio
 from tts_util import run_tts
 from audio_player import play_audio, get_voice_channel, skip_audio
 from history import log_command
+from guild_settings import get_tts_instructions_for
 
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_overall = 6000
@@ -81,7 +82,7 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
-            style = instr or "Parle avec un accent québécois stéréotypé."
+            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", "Parle avec un accent québécois stéréotypé.")
             success = await asyncio.wait_for(
                 loop.run_in_executor(None, run_tts, msg, filename, "ash", style),
                 timeout=20
@@ -98,10 +99,61 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
 async def setup(bot):
     @bot.tree.command(
         name="say-vc",
-        description="Lecture TTS en vocal (via une fenêtre de saisie)"
+        description="Lecture TTS en vocal (UI si aucun paramètre)"
     )
-    async def say_vc(interaction: discord.Interaction):
-        await interaction.response.send_modal(SayVCModal())
+    @app_commands.describe(
+        message="Texte à lire (si vide, ouvre une fenêtre)",
+        instructions="Style de voix (optionnel)",
+        voice_channel="Salon vocal cible (optionnel)"
+    )
+    async def say_vc(
+        interaction: discord.Interaction,
+        message: str = None,
+        instructions: str = None,
+        voice_channel: discord.VoiceChannel = None
+    ):
+        # Si aucun paramètre fourni, on utilise l'UI (Modal) existante
+        if not message or not message.strip():
+            await interaction.response.send_modal(SayVCModal())
+            return
+
+        # Exécution directe avec paramètres
+        msg = message.strip()
+        instr = instructions.strip() if instructions else None
+        log_command(
+            interaction.user, "say_vc",
+            {
+                "message": msg,
+                "instructions": instr,
+                "voice_channel": str(voice_channel) if voice_channel else None
+            },
+            guild=interaction.guild
+        )
+        vc_channel = get_voice_channel(interaction, voice_channel)
+        if not vc_channel:
+            await interaction.response.send_message(
+                "Vous devez être dans un salon vocal ou en préciser un.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.defer(thinking=True, ephemeral=False)
+        loop = asyncio.get_running_loop()
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            filename = tmp.name
+        try:
+            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", "Parle avec un accent québécois stéréotypé.")
+            success = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, msg, filename, "ash", style),
+                timeout=20
+            )
+            if not success:
+                await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
+                return
+            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            embed = build_safe_tts_embed(msg, instr, interaction.user.display_name)
+            await interaction.followup.send(embed=embed, ephemeral=False)
+        except Exception as exc:
+            await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
 
     @bot.tree.command(
         name="skip",

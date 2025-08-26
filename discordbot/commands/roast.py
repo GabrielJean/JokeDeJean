@@ -6,6 +6,7 @@ from gpt_util import run_gpt
 from tts_util import run_tts
 from audio_player import play_audio, get_voice_channel, skip_audio_by_guild
 from history import log_command
+from guild_settings import get_tts_instructions_for
 import os
 
 # --- Stop Playback View ---
@@ -203,7 +204,7 @@ async def play_audio_and_cleanup(interaction, filename, vc_channel):
 
 # --- Main roast logic ---
 
-async def do_roast(interaction, cible_id, intensite, details):
+async def do_roast(interaction, cible_id, intensite, details, voice_channel: discord.VoiceChannel = None):
     guild = interaction.guild
     cible = guild.get_member(int(cible_id)) if cible_id and cible_id != "none" else None
     if cible is None:
@@ -241,21 +242,21 @@ async def do_roast(interaction, cible_id, intensite, details):
         return
     embed = discord.Embed(title=titre, description=texte[:1024],
                           color=0xff8800 if intensite < 4 else 0xff0000)
-    await interaction.followup.send(embed=embed)  # <-- Remove ephemeral=True here
+    await interaction.followup.send(embed=embed)
     log_command(
         interaction.user, "roast",
         {
             "cible": username,
             "intensite": intensite,
             "details": details,
-            "voice_channel": None
+            "voice_channel": str(voice_channel) if voice_channel else None
         },
         guild=interaction.guild
     )
     # Vocal
-    vc_channel = get_voice_channel(interaction)
+    vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
-        instructions = "Parle avec un accent québécois stéréotypé."
+        instructions = get_tts_instructions_for(interaction.guild, "roast", "Parle avec un accent québécois stéréotypé.")
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
@@ -281,25 +282,58 @@ async def do_roast(interaction, cible_id, intensite, details):
 async def setup(bot):
     @bot.tree.command(
         name="roast",
-        description="Compose un roast de façon interactive"
+        description="Compose un roast (UI si aucun paramètre)"
     )
-    async def roast(interaction: discord.Interaction):
-        user = interaction.user
-        if not user.voice or not user.voice.channel:
+    @app_commands.describe(
+        cible="Membre à roaster (si vide, ouvre l'UI)",
+        intensite="Intensité de 1 à 5 (par défaut 2)",
+        details="Détails à utiliser (optionnel)",
+        voice_channel="Salon vocal cible (optionnel)"
+    )
+    async def roast(
+        interaction: discord.Interaction,
+        cible: discord.Member = None,
+        intensite: int = None,
+        details: str = None,
+        voice_channel: discord.VoiceChannel = None
+    ):
+        # Route UI si aucun paramètre de contenu n'est fourni
+        if cible is None and intensite is None and (details is None or details.strip() == ""):
+            user = interaction.user
+            if not user.voice or not user.voice.channel:
+                await interaction.response.send_message(
+                    "Tu dois être dans un salon vocal pour lancer cette commande.", ephemeral=True
+                )
+                return
+            voice_channel_cur = user.voice.channel
+            voice_members = [m for m in voice_channel_cur.members if not m.bot]
+            if not voice_members:
+                await interaction.response.send_message(
+                    "Aucun membre humain trouvé dans ton salon vocal.", ephemeral=True
+                )
+                return
+            view = RoastSetupView(bot, interaction, voice_members)
             await interaction.response.send_message(
-                "Tu dois être dans un salon vocal pour lancer cette commande.", ephemeral=True
+                view=view,
+                ephemeral=True,
+                content=view.build_content()
             )
             return
-        voice_channel = user.voice.channel
-        voice_members = [m for m in voice_channel.members if not m.bot]
-        if not voice_members:
+
+        # Exécution directe avec paramètres
+        if not cible:
             await interaction.response.send_message(
-                "Aucun membre humain trouvé dans ton salon vocal.", ephemeral=True
+                "Spécifie la cible (cible=@membre) ou utilise la version UI sans paramètres.",
+                ephemeral=True
             )
             return
-        view = RoastSetupView(bot, interaction, voice_members)
-        await interaction.response.send_message(
-            view=view,
-            ephemeral=True,
-            content=view.build_content()
+        level = 2 if intensite is None else max(1, min(5, int(intensite)))
+        det = details.strip() if details else ""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        await do_roast(
+            interaction,
+            cible_id=cible.id,
+            intensite=level,
+            details=det,
+            voice_channel=voice_channel
         )

@@ -90,5 +90,10 @@ async def setup(bot):
             value="Joue une radio lofi chill en vocal.\nParams: voice_channel",
             inline=False
         )
+        embed.add_field(
+            name="/settings",
+            value="Réglages TTS (UI si aucun paramètre).\nParams: target, tts_instructions, reset\nTargets: global | say-vc | roast | compliment",
+            inline=False
+        )
         embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
         await interaction.response.send_message(embed=embed, ephemeral=True)

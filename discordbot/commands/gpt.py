@@ -223,12 +223,32 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
 async def setup(bot):
     @bot.tree.command(
         name="gpt",
-        description="Pose une question au bot en mode interactif"
+        description="Pose une question au bot (UI si aucun paramètre)"
     )
-    async def gpt(interaction: discord.Interaction):
-        view = GPTView(bot, interaction)
-        await interaction.response.send_message(
-            content=view.build_content(),
-            view=view,
-            ephemeral=True
+    @app_commands.describe(
+        query="Question à poser (si vide, ouvre l'UI)",
+        lecture_vocale="Lire la réponse en vocal (par défaut: oui)",
+        prompt="Prompt système personnalisé (optionnel)"
+    )
+    async def gpt(
+        interaction: discord.Interaction,
+        query: str = None,
+        lecture_vocale: bool = True,
+        prompt: str = None
+    ):
+        if not query or not query.strip():
+            view = GPTView(bot, interaction)
+            await interaction.response.send_message(
+                content=view.build_content(),
+                view=view,
+                ephemeral=True
+            )
+            return
+        # Paramètres fournis: exécution directe
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        await do_gpt(
+            interaction,
+            question=query.strip(),
+            prompt=prompt.strip() if prompt else None,
+            lecture_vocale=lecture_vocale
         )

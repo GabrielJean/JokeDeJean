@@ -25,6 +25,19 @@ class SayModal(discord.ui.Modal, title="Envoyer un message dans ce salon"):
         await interaction.response.send_message("✅ Message envoyé !", ephemeral=True)
 
 async def setup(bot):
-    @bot.tree.command(name="say-tc", description="Affiche le texte dans le salon texte")
-    async def say_tc(interaction: discord.Interaction):
-        await interaction.response.send_modal(SayModal())
+    @bot.tree.command(name="say-tc", description="Affiche le texte dans le salon texte (UI si aucun paramètre)")
+    @app_commands.describe(
+        message="Message à afficher (si vide, ouvre une fenêtre)"
+    )
+    async def say_tc(interaction: discord.Interaction, message: str = None):
+        if not message or not message.strip():
+            await interaction.response.send_modal(SayModal())
+            return
+        content = message.strip()
+        log_command(
+            interaction.user, "say_tc",
+            {"message": content},
+            guild=interaction.guild
+        )
+        await interaction.channel.send(content)
+        await interaction.response.send_message("✅ Message envoyé !", ephemeral=True)

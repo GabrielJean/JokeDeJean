@@ -8,13 +8,51 @@ from concurrent.futures import ProcessPoolExecutor
 
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
+YTDLP_CLIENT_ORDER = ["android", "ios", "web"]
+
+
+def _make_ydl_opts(client: str):
+    return {
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'format': 'bestaudio/best',
+        'extractor_args': {
+            # Workaround for YouTube SABR streaming blocking some web formats
+            'youtube': {
+                'player_client': [client]
+            }
+        },
+    }
+
+
 def ytdlp_get_info(url):
-    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True, "format": "bestaudio"}) as ydl:
-        return ydl.extract_info(url, download=False)
+    last_exc = None
+    for client in YTDLP_CLIENT_ORDER:
+        try:
+            with yt_dlp.YoutubeDL(_make_ydl_opts(client)) as ydl:
+                info = ydl.extract_info(url, download=False)
+                info['__client'] = client
+                return info
+        except Exception as exc:
+            last_exc = exc
+            continue
+    # If all attempts failed, raise the last exception
+    raise last_exc
+
 
 def ytdlp_search(query):
-    with yt_dlp.YoutubeDL({'quiet': True, 'noplaylist': True, "format": "bestaudio"}) as ydl:
-        return ydl.extract_info(f"ytsearch3:{query}", download=False)['entries']
+    last_exc = None
+    for client in YTDLP_CLIENT_ORDER:
+        try:
+            with yt_dlp.YoutubeDL(_make_ydl_opts(client)) as ydl:
+                res = ydl.extract_info(f"ytsearch3:{query}", download=False)
+                entries = res.get('entries') if isinstance(res, dict) else res
+                return entries
+        except Exception as exc:
+            last_exc = exc
+            continue
+    raise last_exc
 
 class StopPlaybackView(discord.ui.View):
     def __init__(self, guild_id: int, initiator_id: int, *, timeout=900):
@@ -136,13 +174,15 @@ async def setup(bot):
 
     @bot.tree.command(
         name="ytsearch",
-        description="Recherche une vidéo YouTube et joue l'audio dans le vocal (popup)"
+        description="Recherche une vidéo YouTube et joue l'audio dans le vocal (UI si aucun paramètre)"
     )
     @app_commands.describe(
+        query="Recherche YouTube (si vide, ouvre une fenêtre)",
         voice_channel="Salon vocal cible (optionnel)"
     )
     async def ytsearch(
         interaction: discord.Interaction,
+        query: str = None,
         voice_channel: discord.VoiceChannel = None,
     ):
         async def on_complete(inter: discord.Interaction, search_query: str):
@@ -331,8 +371,12 @@ async def setup(bot):
             sent_msg = await inter.followup.send(content=out_text, view=view, ephemeral=True)
             view.message = sent_msg
 
-        modal = YTSearchModal(on_complete)
-        await interaction.response.send_modal(modal)
+        if query and query.strip():
+            # Exécution directe: on saute le modal et on affiche directement les résultats avec UI de sélection
+            await on_complete(interaction, query.strip())
+        else:
+            modal = YTSearchModal(on_complete)
+            await interaction.response.send_modal(modal)
 
     @bot.tree.command(
         name="lofi",
