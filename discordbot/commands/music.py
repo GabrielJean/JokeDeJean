@@ -3,6 +3,8 @@ from discord import app_commands
 import asyncio
 import yt_dlp
 import random
+import json
+from pathlib import Path
 from audio_player import play_ytdlp_stream, get_voice_channel, consume_rotation_stop, skip_audio_by_guild
 from history import log_command
 from concurrent.futures import ProcessPoolExecutor
@@ -11,55 +13,27 @@ YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 YTDLP_CLIENT_ORDER = ["android", "ios", "web"]
 
-# Curated categories with YouTube sources (videos or playlists).
-# Replace the example URLs with your own.
-MUSIC_SOURCES = {
-    "lofi": [
-        "https://www.youtube.com/watch?v=GU8htjxY6ro",
-        "https://www.youtube.com/watch?v=BfPZp30enLc",
-        "https://www.youtube.com/watch?v=CkntZ7ijS2s",
-        "https://www.youtube.com/watch?v=aC3K-AqUZyo",
-        "https://www.youtube.com/watch?v=Yqk13qPcXis",
-        # Add more lofi playlists/videos
-    ],
-    "gaming": [
-        "https://www.youtube.com/watch?v=PP2Uvesx4ls",
-        "https://www.youtube.com/watch?v=ZdU6qDeMM_I",
-        "https://www.youtube.com/watch?v=B7QzbCViK0E",
-        "https://www.youtube.com/watch?v=_6nv4rrIMuU",
-        "https://www.youtube.com/watch?v=5bUa1w24ASc",
-        "https://www.youtube.com/watch?v=FqwsbV5hItg"
-    ],
-    "hype": [
-        "https://www.youtube.com/watch?v=5bUa1w24ASc",
-    ],
-    "chill": [
-        # Add chill playlists/videos
-    ],
-    "rock": [
-        "https://www.youtube.com/watch?v=V5jZirHBGCs",
-        "https://www.youtube.com/watch?v=4Rr4Cv2TsU8",
-        "https://www.youtube.com/watch?v=eh87FoETejw",
-    ],
-    "classical_music": [
-        "https://www.youtube.com/watch?v=t0CdR6LximA",
-        "https://www.youtube.com/watch?v=ElWSdcg67RY",
-    ],
-    "ost_anime": [
-        "https://www.youtube.com/watch?v=GNWLILeztaI",
-        "https://www.youtube.com/watch?v=RFi98VZETm0",
-        "https://www.youtube.com/watch?v=4N9HmMNf7EU"
-        "https://www.youtube.com/watch?v=zavCTwkGseg"
-        "https://www.youtube.com/watch?v=JdU0gDDCiB8"
-    ],
-    "jazz/blues": [
-        "https://www.youtube.com/watch?v=eh87FoETejw"
-        "https://www.youtube.com/watch?v=L1xwUKxpdJg"
-        "https://www.youtube.com/watch?v=qclDEAj7SAU"
-        "https://www.youtube.com/watch?v=T4O0j-pjHA8"
-        "https://www.youtube.com/watch?v=6fxxghNzKmM"
-    ],
-}
+# Path to the JSON file defining categories and URLs
+MUSIC_SOURCES_PATH = (Path(__file__).resolve().parent.parent / "music_sources.json")
+
+
+def load_music_sources():
+    try:
+        with open(MUSIC_SOURCES_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        normalized = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, list):
+                continue
+            urls = [u.strip() for u in v if isinstance(u, str) and u.strip()]
+            normalized[k] = urls
+        return normalized
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
 
 # Per-guild stop flags for the music rotation task (internal control)
 _MUSIC_ROTATION_STOP_FLAGS = {}
@@ -139,24 +113,12 @@ async def setup(bot):
         category="Catégorie de musique",
         voice_channel="Salon vocal cible (optionnel)"
     )
-    @app_commands.choices(
-        category=[
-            app_commands.Choice(name="lofi", value="lofi"),
-            app_commands.Choice(name="gaming", value="gaming"),
-            app_commands.Choice(name="hype", value="hype"),
-            app_commands.Choice(name="chill", value="chill"),
-            app_commands.Choice(name="rock", value="rock"),
-            app_commands.Choice(name="classical music", value="classical_music"),
-            app_commands.Choice(name="ost anime", value="ost_anime"),
-            app_commands.Choice(name="jazz/blues", value="jazz/blues"),
-        ]
-    )
     async def music(
         interaction: discord.Interaction,
-        category: app_commands.Choice[str] = None,
+        category: str = None,
         voice_channel: discord.VoiceChannel = None
     ):
-        cat = category.value if isinstance(category, app_commands.Choice) else str(category)
+        cat = category.strip().lower() if isinstance(category, str) and category else None
         log_command(
             interaction.user, "music",
             {"category": cat, "voice_channel": str(voice_channel) if voice_channel else None},
@@ -171,12 +133,16 @@ async def setup(bot):
 
         # If no category provided, show a UI to select it, then start rotation
         if category is None:
+            categories_map = load_music_sources()
+            if not categories_map:
+                await interaction.followup.send("Aucune catégorie disponible. Configurez d'abord music_sources.json.", ephemeral=True)
+                return
             class CategorySelectView(discord.ui.View):
                 def __init__(self):
                     super().__init__(timeout=120)
                     self.selected_key = None
                     options = []
-                    for key in MUSIC_SOURCES.keys():
+                    for key in categories_map.keys():
                         nice = key.replace('_', ' ')
                         options.append(discord.SelectOption(label=nice, value=key))
                     self.select = discord.ui.Select(placeholder="Choisissez une catégorie...", min_values=1, max_values=1, options=options)
@@ -196,7 +162,8 @@ async def setup(bot):
                             return
                         await inter.response.defer(ephemeral=True)
                         cat_key = self.selected_key
-                        sources = MUSIC_SOURCES.get(cat_key, [])
+                        categories_map_local = load_music_sources()
+                        sources = categories_map_local.get(cat_key, [])
                         if not sources:
                             await inter.followup.send("Aucune source configurée pour cette catégorie.", ephemeral=True)
                             return
@@ -278,7 +245,11 @@ async def setup(bot):
             await interaction.followup.send("Choisissez une catégorie de musique:", view=view, ephemeral=True)
             return
 
-        sources = MUSIC_SOURCES.get(cat, [])
+        categories_map = load_music_sources()
+        if cat and cat not in categories_map:
+            await interaction.followup.send("Catégorie inconnue. Veuillez choisir parmi: " + ", ".join(sorted(k.replace('_',' ') for k in categories_map.keys())), ephemeral=True)
+            return
+        sources = categories_map.get(cat, [])
         if not sources:
             await interaction.followup.send("Aucune source configurée pour cette catégorie.", ephemeral=True)
             return
@@ -292,8 +263,9 @@ async def setup(bot):
         _MUSIC_ROTATION_STOP_FLAGS[gid] = False
 
         # Accusé de réception minimal; l'annonce du player gère les boutons Stop/Skip
+        cat_display = (cat or "").replace('_', ' ') or "(non spécifiée)"
         await interaction.followup.send(
-            f"Lecture de musique '{category.name}' démarrée",
+            f"Lecture de musique '{cat_display}' démarrée — regardez l'annonce du player dans le salon.",
             ephemeral=True,
         )
 

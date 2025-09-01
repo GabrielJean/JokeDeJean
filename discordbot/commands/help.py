@@ -87,7 +87,7 @@ async def setup(bot):
         )
         embed.add_field(
             name="/music",
-            value="Joue une catégorie de musique YouTube en rotation aléatoire.\nParams: category, voice_channel\nCatégories: lofi, gaming, hype, chill, rock, classical piano, ost anime, jazz",
+            value="Joue une catégorie de musique YouTube en rotation aléatoire.\nParams: category, voice_channel (optionnels)\nCatégories dans music_sources.json",
             inline=False
         )
         embed.add_field(
