@@ -13,6 +13,12 @@ _voice_seek_flag = {}
 _progress_tasks = {}
 _voice_queue_running = {}
 
+# Persistent per-guild progress message to reuse across tracks within a session
+_persistent_progress = {}
+
+# Rotation stop requests, set by the player Stop button and consumed by music rotation logic
+_rotation_stop_requests = {}
+
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 def ytdlp_get_info(url):
@@ -81,6 +87,8 @@ class ProgressView(discord.ui.View):
         if not is_live and duration and duration > 0:
             self.add_item(Seek30Back(guild_id))
             self.add_item(Seek30Fwd(guild_id))
+        # Add skip and stop controls
+        self.add_item(SkipAudioBtn(guild_id))
         self.add_item(StopAudioBtn(guild_id))
 
 class Seek30Back(discord.ui.Button):
@@ -113,11 +121,32 @@ class StopAudioBtn(discord.ui.Button):
         self.guild_id = guild_id
 
     async def callback(self, interaction: discord.Interaction):
+        # Signal the rotation (e.g., /music) to stop entirely
+        request_rotation_stop(self.guild_id)
+        # Also skip the current track immediately
         skip_audio_by_guild(self.guild_id)
         try:
             await interaction.response.send_message("⏹️ Lecture stoppée !", ephemeral=True)
         except discord.errors.InteractionResponded:
             await interaction.followup.send("⏹️ Lecture stoppée !", ephemeral=True)
+
+class SkipAudioBtn(discord.ui.Button):
+    def __init__(self, guild_id):
+        super().__init__(style=discord.ButtonStyle.primary, label="⏭️ Skip", custom_id=f"skip_track_{guild_id}")
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        did_skip = skip_audio_by_guild(self.guild_id)
+        try:
+            if did_skip:
+                await interaction.response.send_message("⏭️ Piste suivante...", ephemeral=True)
+            else:
+                await interaction.response.send_message("Aucune lecture en cours à passer.", ephemeral=True)
+        except discord.errors.InteractionResponded:
+            if did_skip:
+                await interaction.followup.send("⏭️ Piste suivante...", ephemeral=True)
+            else:
+                await interaction.followup.send("Aucune lecture en cours à passer.", ephemeral=True)
 
 async def play_audio(
     interaction,
@@ -216,13 +245,23 @@ async def _process_audio_item(guild, gid, item):
         elif vc.channel != voice_channel:
             await vc.move_to(voice_channel)
         should_loop = loop_flag
-        # Only create a new progress bar announcement if one doesn't exist!
-        if progress_msg is None and announce_message:
-            disp_title = title or "Audio"
-            msg_txt, bar = _progress_bar(0, duration, disp_title, video_url, is_live=is_live)
-            view = ProgressView(guild.id, duration=duration, is_live=is_live)
-            progress_msg = await interaction.channel.send(msg_txt, view=view)
-            seek_view = view
+        # Only create a new progress bar announcement if requested; otherwise try to reuse a persistent one
+        if progress_msg is None:
+            if announce_message:
+                disp_title = title or "Audio"
+                msg_txt, bar = _progress_bar(0, duration, disp_title, video_url, is_live=is_live)
+                view = ProgressView(guild.id, duration=duration, is_live=is_live)
+                progress_msg = await interaction.channel.send(msg_txt, view=view)
+                seek_view = view
+                # Save as persistent message for this guild to reuse across subsequent tracks
+                _persistent_progress[guild.id] = progress_msg
+            else:
+                # Reuse persistent message if available
+                pm = _persistent_progress.get(guild.id)
+                if pm is not None:
+                    view = ProgressView(guild.id, duration=duration, is_live=is_live)
+                    progress_msg = pm
+                    seek_view = view
         loop_async = asyncio.get_running_loop()
         base_seek = seek_pos
         while True:
@@ -474,3 +513,15 @@ def seek_audio_by_guild(guild_id, seconds: int):
     new_pos = max(0, min(now + seconds, info["duration"] - 1))
     _voice_seek_flag[guild_id] = new_pos - now
     return new_pos
+
+# ===== Rotation stop coordination (for commands like /music) =====
+
+def request_rotation_stop(guild_id: int):
+    _rotation_stop_requests[guild_id] = True
+
+
+def consume_rotation_stop(guild_id: int) -> bool:
+    if _rotation_stop_requests.get(guild_id):
+        _rotation_stop_requests[guild_id] = False
+        return True
+    return False

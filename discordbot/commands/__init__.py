@@ -1,4 +1,4 @@
-from . import jokes, tts, gpt, moderation, say, util, help, roast, compliment, yt, bot_mention, settings
+from . import jokes, tts, gpt, music, moderation, say, util, help, roast, compliment, yt, bot_mention, settings
 
 async def setup_all_commands(bot):
     await jokes.setup(bot)
@@ -11,5 +11,6 @@ async def setup_all_commands(bot):
     await roast.setup(bot)
     await compliment.setup(bot)
     await yt.setup(bot)
+    await music.setup(bot)
     await bot_mention.setup(bot)   # <--- ADD THIS LINE
     await settings.setup(bot)

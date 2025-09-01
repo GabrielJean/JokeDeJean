@@ -10,7 +10,6 @@ YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)
 
 YTDLP_CLIENT_ORDER = ["android", "ios", "web"]
 
-
 def _make_ydl_opts(client: str):
     return {
         'quiet': True,
@@ -378,50 +377,3 @@ async def setup(bot):
             modal = YTSearchModal(on_complete)
             await interaction.response.send_modal(modal)
 
-    @bot.tree.command(
-        name="lofi",
-        description="Joue un stream lofi chill en boucle dans le vocal"
-    )
-    @app_commands.describe(
-        voice_channel="Salon vocal cible (optionnel)"
-    )
-    async def lofi(
-        interaction: discord.Interaction,
-        voice_channel: discord.VoiceChannel = None
-    ):
-        LOFI_URL = "https://www.youtube.com/watch?v=aC3K-AqUZyo"  # Lofi Girl 24/7
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        loop_async = asyncio.get_running_loop()
-        vc_channel = get_voice_channel(interaction, voice_channel)
-        if not vc_channel:
-            await interaction.followup.send("Vous devez être dans un salon vocal ou en préciser un.", ephemeral=True)
-            return
-        try:
-            info = await loop_async.run_in_executor(YTDLP_EXECUTOR, ytdlp_get_info, LOFI_URL)
-        except Exception as exc:
-            await interaction.followup.send(f"Erreur lors de la récupération d'info : {exc}", ephemeral=True)
-            return
-        duration = info.get("duration")
-        video_title = info.get("title", "Lofi")
-        video_url = info.get("webpage_url", LOFI_URL)
-        is_live = bool(info.get("is_live")) or info.get("live_status") == "is_live"
-        view = StopPlaybackView(interaction.guild.id, interaction.user.id, timeout=900)
-        await interaction.followup.send(
-            f"Lecture du lofi lancée en boucle dans le salon vocal.\n"
-            "Regardez ce salon pour la barre de progression !",
-            ephemeral=True,
-            view=view
-        )
-        asyncio.create_task(
-            play_ytdlp_stream(
-                interaction,
-                info,
-                vc_channel,
-                duration=duration,
-                title=video_title,
-                video_url=video_url,
-                announce_message=True,
-                loop=True, # always loop for lofi stream
-                is_live=is_live,
-            )
-        )
