@@ -8,9 +8,12 @@ from typing import Optional, Tuple, Dict
 import aiohttp
 import discord
 from discord import app_commands
-
-from audio_player import play_audio, get_voice_channel, skip_audio_by_guild
-from history import log_command
+try:
+    from ..audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
+    from ..history import log_command  # type: ignore
+except ImportError:  # script fallback
+    from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
+    from history import log_command  # type: ignore
 
 
 class StopPlaybackView(discord.ui.View):

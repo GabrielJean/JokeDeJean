@@ -4,13 +4,21 @@ import os
 import random
 import tempfile
 import asyncio
-from tts_util import run_tts
-from audio_player import play_audio, get_voice_channel
-from history import log_command
-from reddit_loader import get_reddit_jokes
+from pathlib import Path
+try:
+    from ..tts_util import run_tts
+    from ..audio_player import play_audio, get_voice_channel
+    from ..history import log_command
+    from ..reddit_loader import get_reddit_jokes
+except ImportError:  # fallback when run as script from project root
+    from tts_util import run_tts  # type: ignore
+    from audio_player import play_audio, get_voice_channel  # type: ignore
+    from history import log_command  # type: ignore
+    from reddit_loader import get_reddit_jokes  # type: ignore
 
-AUDIO_DIR = "./Audio"
-audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")]
+BASE_DIR = Path(__file__).resolve().parent.parent
+AUDIO_DIR = BASE_DIR / "Audio"
+audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")] if AUDIO_DIR.exists() else []
 
 async def setup(bot):
     @bot.tree.command(name="joke", description="Blague Reddit en vocal")
@@ -63,7 +71,7 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal, ou préciser un vocal !", ephemeral=True)
             return
         try:
-            asyncio.create_task(play_audio(interaction, os.path.join(AUDIO_DIR, file), vc_channel))
+            asyncio.create_task(play_audio(interaction, os.path.join(str(AUDIO_DIR), file), vc_channel))
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception:
             await interaction.followup.send("Erreur pendant la lecture !", ephemeral=True)

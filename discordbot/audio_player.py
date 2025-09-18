@@ -3,7 +3,19 @@ import asyncio
 import tempfile
 import os
 import time
+import logging
 from concurrent.futures import ProcessPoolExecutor
+
+# Import the shared bot instance with package-safe relative import first so
+# audio tasks launched after command setup can reference it without
+# ModuleNotFoundError when running via `python -m discordbot.main`.
+try:  # package context
+    from .bot_instance import bot  # type: ignore
+except Exception:  # script fallback
+    try:
+        from bot_instance import bot  # type: ignore
+    except Exception:  # final fallback placeholder (should not happen in normal runs)
+        bot = None  # type: ignore
 
 _voice_audio_queues = {}
 _voice_locks = {}
@@ -160,7 +172,8 @@ async def play_audio(
     loop=False,
     is_live=False,
 ):
-    from bot_instance import bot
+    if bot is None:
+        raise RuntimeError("Bot instance unavailable in play_audio (import failed).")
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File {file_path} not found.")
     guild = interaction.guild
@@ -192,7 +205,8 @@ async def play_ytdlp_stream(
     loop=False,
     is_live=False
 ):
-    from bot_instance import bot
+    if bot is None:
+        raise RuntimeError("Bot instance unavailable in play_ytdlp_stream (import failed).")
     guild = interaction.guild
     gid = guild.id if guild else 0
     if gid not in _voice_audio_queues:
@@ -230,7 +244,9 @@ async def _run_audio_queue(guild, queue, lock, gid):
         _voice_queue_running[gid] = False
 
 async def _process_audio_item(guild, gid, item):
-    from bot_instance import bot
+    if bot is None:
+        logging.error("Bot instance unavailable in _process_audio_item; aborting track.")
+        return
     (
         file_path, fut, voice_channel, interaction,
         use_stream, duration, title, video_url,
@@ -241,9 +257,21 @@ async def _process_audio_item(guild, gid, item):
     try:
         vc = discord.utils.get(bot.voice_clients, guild=guild)
         if not vc or not vc.is_connected():
-            vc = await voice_channel.connect()
+            try:
+                vc = await voice_channel.connect()
+            except Exception as conn_ex:
+                logging.exception("Failed to connect to voice channel %s: %s", voice_channel, conn_ex)
+                if not fut.done():
+                    fut.set_exception(conn_ex)
+                return
         elif vc.channel != voice_channel:
-            await vc.move_to(voice_channel)
+            try:
+                await vc.move_to(voice_channel)
+            except Exception as move_ex:
+                logging.exception("Failed to move to voice channel %s: %s", voice_channel, move_ex)
+                if not fut.done():
+                    fut.set_exception(move_ex)
+                return
         should_loop = loop_flag
         # Only create a new progress bar announcement if requested; otherwise try to reuse a persistent one
         if progress_msg is None:
@@ -336,6 +364,7 @@ async def _process_audio_item(guild, gid, item):
             try:
                 vc.play(audio_source)
             except discord.errors.ClientException as e:
+                logging.exception("VC play() failed: %s", e)
                 if not fut.done():
                     fut.set_exception(e)
                 break
@@ -352,7 +381,7 @@ async def _process_audio_item(guild, gid, item):
                     if duration:
                         new_elapsed = max(0, min(new_elapsed, duration-1))
                     _voice_seek_flag[gid] = 0
-                    
+
                     # Stop current playback
                     if vc.is_playing():
                         vc.stop()
@@ -361,11 +390,11 @@ async def _process_audio_item(guild, gid, item):
                             if not vc.is_playing():
                                 break
                             await asyncio.sleep(0.1)
-                    
+
                     # Update the start time to reflect the new position
                     _voice_now_playing[gid]["start_time"] = time.time() - new_elapsed
                     _voice_now_playing[gid]["offset"] = new_elapsed
-                    
+
                     # Create new audio source with the seek position
                     def create_seek_audio():
                         ss = f"-ss {new_elapsed}" if new_elapsed > 0 else ""
@@ -380,7 +409,7 @@ async def _process_audio_item(guild, gid, item):
                                 before_options=f"{ss} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5".strip(),
                                 options="-vn",
                             )
-                    
+
                     # Start playing from the new position
                     try:
                         seek_audio_source = create_seek_audio()

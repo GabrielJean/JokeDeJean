@@ -1,7 +1,16 @@
 # commands/say.py
 import discord
 from discord import app_commands
-from history import log_command
+try:
+    from ..audio_player import get_voice_channel, play_audio
+    from ..tts_util import run_tts
+    from ..history import log_command
+    from ..guild_settings import get_tts_instructions_for
+except ImportError:  # script fallback
+    from audio_player import get_voice_channel, play_audio  # type: ignore
+    from tts_util import run_tts  # type: ignore
+    from history import log_command  # type: ignore
+    from guild_settings import get_tts_instructions_for  # type: ignore
 
 class SayModal(discord.ui.Modal, title="Envoyer un message dans ce salon"):
     message = discord.ui.TextInput(

@@ -6,8 +6,10 @@ import json
 import os
 import re
 from collections import defaultdict, deque
-
-from gpt_util import run_gpt
+try:
+    from ..gpt_util import run_gpt  # type: ignore
+except ImportError:  # script fallback
+    from gpt_util import run_gpt  # type: ignore
 
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:

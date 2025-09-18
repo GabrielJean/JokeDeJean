@@ -1,7 +1,11 @@
 import discord
 from discord import app_commands
-from history import log_command, get_recent_history
-from audio_player import skip_audio_by_guild
+try:
+    from ..history import log_command, get_recent_history
+    from ..audio_player import skip_audio_by_guild
+except ImportError:  # script fallback
+    from history import log_command, get_recent_history  # type: ignore
+    from audio_player import skip_audio_by_guild  # type: ignore
 
 async def setup(bot):
     @bot.tree.command(name="leave", description="Quitte le vocal")

@@ -1,6 +1,20 @@
 from openai import AzureOpenAI
 import logging
-from bot_instance import get_config
+
+"""GPT utility wrapper.
+
+Provides run_gpt() with robust handling of Azure OpenAI SDK response shapes.
+Imports get_config with a relative-first strategy so it functions under
+`python -m discordbot.main` as well as direct script execution.
+"""
+try:
+    from .bot_instance import get_config  # type: ignore
+except Exception:  # pragma: no cover
+    try:
+        from bot_instance import get_config  # type: ignore
+    except Exception:
+        def get_config():  # type: ignore
+            return {}
 
 _client = None
 
@@ -56,7 +70,7 @@ def run_gpt(query, system_prompt=None, max_tokens=400):
                     try:
                         if isinstance(p, dict):
                             if p.get("type") == "text" and p.get("text"):
-                                collected.append(p["text"]) 
+                                collected.append(p["text"])
                         else:
                             # Pydantic object with attributes
                             if getattr(p, "type", None) == "text" and getattr(p, "text", None):

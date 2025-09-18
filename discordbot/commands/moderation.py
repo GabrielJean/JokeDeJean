@@ -1,13 +1,15 @@
 import discord
 from discord import app_commands
 import time
-from history import log_command
+try:
+    from ..history import log_command
+    from ..audio_player import _voice_audio_queues, _voice_now_playing
+except ImportError:  # script fallback
+    from history import log_command  # type: ignore
+    from audio_player import _voice_audio_queues, _voice_now_playing  # type: ignore
 
-# VC block dict
-_vc_blocks = {}  # (guild_id, channel_id): {user_id: until_ts}
-
-# -- Import your audio queue data from your main player module --
-from audio_player import _voice_audio_queues, _voice_now_playing
+# VC block dict: (guild_id, channel_id): {user_id: until_ts}
+_vc_blocks = {}
 
 async def setup(bot):
     @bot.tree.command(name="bloque", description="Bloque le bot pour 2h de rejoindre ton vocal actuel")
@@ -21,9 +23,7 @@ async def setup(bot):
         guild = interaction.guild
         channel = user.voice.channel
         key = (guild.id, channel.id)
-        if key not in _vc_blocks:
-            _vc_blocks[key] = {}
-        _vc_blocks[key][user.id] = time.time() + 2 * 3600
+        _vc_blocks.setdefault(key, {})[user.id] = time.time() + 2 * 3600
         await interaction.response.send_message(
             f"🔒 Le bot ne peux rejoindre **{channel.name}** pour toi pendant 2h. Refais `/bloque` pour prolonger.",
             ephemeral=True)

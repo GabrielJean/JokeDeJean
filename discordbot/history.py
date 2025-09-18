@@ -2,8 +2,21 @@ import threading
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
-HISTORY_FILE = "./data/command_history.json"
+# Optional import – we only need guild_settings for side effects in some cases.
+try:  # Package style
+    from . import guild_settings  # noqa: F401
+except Exception:
+    try:
+        import guild_settings  # type: ignore  # noqa: F401
+    except Exception:
+        guild_settings = None  # type: ignore
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+HISTORY_FILE = DATA_DIR / "command_history.json"
 _history_lock = threading.Lock()
 
 def log_command(user, command_name, options, guild=None):
@@ -17,7 +30,7 @@ def log_command(user, command_name, options, guild=None):
     }
     with _history_lock:
         try:
-            if os.path.exists(HISTORY_FILE):
+            if HISTORY_FILE.exists():
                 with open(HISTORY_FILE, "r", encoding="utf-8") as src:
                     history = json.load(src)
             else:
@@ -34,7 +47,7 @@ def log_command(user, command_name, options, guild=None):
 def get_recent_history(n=15):
     with _history_lock:
         try:
-            if not os.path.exists(HISTORY_FILE):
+            if not HISTORY_FILE.exists():
                 return []
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 items = json.load(f)

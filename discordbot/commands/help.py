@@ -1,6 +1,33 @@
 import discord
 from discord import app_commands
-from history import log_command
+try:
+    from ..history import log_command
+except ImportError:  # script fallback
+    from history import log_command  # type: ignore
+from discord.ext import commands
+
+# Map command names to a short help description; dynamic embed will only show
+# commands that are actually registered on the bot instance.
+COMMAND_DESCRIPTIONS = {
+    "joke": "Joue une blague Reddit en vocal. Params: voice_channel",
+    "jokeqc": "Blague québécoise .mp3. Params: voice_channel",
+    "penis": "Joue un son spécial. Params: voice_channel",
+    "say-vc": "Lecture TTS personnalisée. Params: message, instructions, sauvegarder_instructions, voice_channel",
+    "gpt": "GPT-4o Q&A, réponse lue. Params: query, lecture_vocale, prompt, sauvegarder_prompt",
+    "roast": "Roast fun, accent québécois ! Params: cible, intensite, details, voice_channel",
+    "compliment": "Compliment drôle/style québécois. Params: cible, details, voice_channel",
+    "bloque": "Bloque le bot pendant 2h de rejoindre ton salon vocal actuel.",
+    "debloque": "Débloque le bot de rejoindre ton salon vocal actuel.",
+    "leave": "Fait quitter le salon vocal au bot.",
+    "say-tc": "Affiche le texte dans le salon texte. Param: message",
+    "history": "Affiche les 15 dernières commandes (éphémère).",
+    "yt": "Joue l'audio d'une vidéo YouTube. Params: url, voice_channel, loop",
+    "ytsearch": "Recherche une vidéo YouTube et joue l'audio. Params: query, voice_channel",
+    "suno": "Lit l'audio d'une chanson Suno (https://suno.com/song/...). Params: url, voice_channel, loop",
+    "skip": "Passe au prochain message TTS en vocal (skip actuel). Params: voice_channel",
+    "music": "Musique YouTube rotation aléatoire. Params: category, voice_channel",
+    "settings": "Réglages TTS (UI si aucun paramètre). Params: target, tts_instructions, reset",
+}
 
 async def setup(bot):
     @bot.tree.command(name="help", description="Affiche la liste des commandes disponibles")
@@ -13,102 +40,17 @@ async def setup(bot):
             description="La plupart des commandes vocales acceptent `voice_channel` (optionnel)."
         )
 
-        embed.add_field(
-            name="/joke",
-            value="Joue une blague Reddit en vocal.\nParams: voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/jokeqc",
-            value="Blague québécoise .mp3.\nParams: voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/penis",
-            value="Joue un son spécial.\nParams: voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/say-vc",
-            value="Lecture TTS personnalisée.\nParams: message, instructions, sauvegarder_instructions, voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/gpt",
-            value="GPT-4o Q&A, réponse lue.\nParams: query, lecture_vocale, prompt, sauvegarder_prompt",
-            inline=False
-        )
-        embed.add_field(
-            name="/roast",
-            value="Roast fun, accent québécois !\nParams: cible, intensite, details, voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/compliment",
-            value="Compliment drôle/style québécois.\nParams: cible, details, voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/bloque",
-            value="Bloque le bot pendant 2h de rejoindre ton salon vocal actuel.",
-            inline=False
-        )
-        embed.add_field(
-            name="/debloque",
-            value="Débloque le bot de rejoindre ton salon vocal actuel.",
-            inline=False
-        )
-        embed.add_field(
-            name="/leave",
-            value="Fait quitter le salon vocal au bot.",
-            inline=False
-        )
-        embed.add_field(
-            name="/say-tc",
-            value="Affiche le texte dans le salon texte. Param: message",
-            inline=False
-        )
-        embed.add_field(
-            name="/history",
-            value="Affiche les 15 dernières commandes (éphémère).",
-            inline=False
-        )
-        embed.add_field(
-            name="/help",
-            value="Affiche cette aide détaillée.",
-            inline=False
-        )
-        embed.add_field(
-            name="/yt",
-            value="Joue l'audio d'une vidéo YouTube dans le vocal.\nParams: url, voice_channel, loop",
-            inline=False
-        )
-        embed.add_field(
-            name="/ytsearch",
-            value="Recherche une vidéo YouTube et joue l'audio dans le vocal.\nParams: query, voice_channel\nUI: permet de choisir la lecture en boucle.",
-            inline=False
-        )
-        embed.add_field(
-            name="/suno",
-            value="Lit l'audio d'une chanson Suno via un lien (ex: https://suno.com/song/...).\nParams: url, voice_channel, loop",
-            inline=False
-        )
-        embed.add_field(
-            name="/skip",
-            value="Passe au prochain message TTS en vocal (skip la lecture actuelle).\nParams: voice_channel",
-            inline=False
-        )
-        embed.add_field(
-            name="/music",
-            value="Joue une catégorie de musique YouTube en rotation aléatoire.\nParams: category, voice_channel (optionnels)\nCatégories dans music_sources.json",
-            inline=False
-        )
-        embed.add_field(
-            name="/settings",
-            value="Réglages TTS (UI si aucun paramètre).\nParams: target, tts_instructions, reset\nTargets: global | say-vc | roast | compliment",
-            inline=False
-        )
+        # Determine which slash commands are actually registered.
+        tree: discord.app_commands.CommandTree = interaction.client.tree  # type: ignore
+        registered = {cmd.name for cmd in tree.walk_commands()}
+        # Always show /help first if present
+        ordered = ["help"] + sorted(c for c in registered if c != "help")
+        for name in ordered:
+            desc = COMMAND_DESCRIPTIONS.get(name, "(Pas de description disponible)")
+            # Keep each field small; Discord limit 1024
+            if len(desc) > 1000:
+                desc = desc[:1000] + "…"
+            embed.add_field(name=f"/{name}", value=desc, inline=False)
 
-        embed.set_footer(text="Besoin d’être dans un vocal OU d'utiliser voice_channel=...  Utilisez /bloque pour être tranquille!")
-
+        embed.set_footer(text="Liste filtrée selon les modules chargés pour CE bot.")
         await interaction.response.send_message(embed=embed, ephemeral=True)

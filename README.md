@@ -8,6 +8,62 @@ A Discord bot that tells jokes, roasts your friends, gives compliments, and read
 - **Customizable compliments and “roasts”**, with the option to provide facts/memes for more personalized jokes
 - **Audio queue**: multiple readings can be scheduled and will play one after another, with no conflict even if several members send commands at the same time
 - **Built-in /help** (lists all bot commands)
+## Two-Bot Mode (Exact Two Profiles)
+Supports exactly TWO profiles — simple and minimal:
+
+1. `main` – everything except music-related commands (`music`, `yt`, `suno`)
+2. `musiconly` – only music-related commands plus essentials (`help`, `util`, `settings`, `moderation`, `bot_mention`)
+
+Configure both tokens directly in `config.json` (preferred — no shell exports needed):
+
+```jsonc
+{
+    // Tokens map: the loader picks the entry matching COMMAND_PROFILE
+    "tokens": {
+        "main": "XXXX_MAIN_BOT_TOKEN",
+        "musiconly": "YYYY_MUSIC_BOT_TOKEN"
+    },
+    // Optional single fallback token (unused if tokens map has the profile)
+    "token": "(optional-fallback)",
+    "tts_url": "TTS_API_URL",
+    "azure_endpoint": "https://your-azure-endpoint.openai.azure.com/",
+    "azure_api_version": "2024-12-01-preview",
+    "gpt_model": "azure-gpt-5-nano",
+    "api_key": "AZURE_OR_TTS_KEY",
+    "bot_system_prompt": "You are a helpful Québécois assistant."
+}
+```
+
+Run in two terminals (no env tokens required):
+
+```bash
+COMMAND_PROFILE=main python -m discordbot.main
+COMMAND_PROFILE=musiconly python -m discordbot.main
+```
+
+Or use the dual launcher (see below) which spawns both automatically. If you ever want a custom subset of modules you can still set `COMMAND_MODULES="mod1,mod2"`, but normally you just pick the profile.
+
+The `/help` command automatically shows ONLY the commands loaded for that process.
+### Run both profiles with one command
+If you prefer not to open two terminals manually, use the bundled launcher:
+
+```bash
+python -m discordbot.run_both
+# or
+python discordbot/run_both.py
+```
+
+What it does:
+* Spawns two child processes (`COMMAND_PROFILE=main` and `COMMAND_PROFILE=musiconly`).
+* Prefixes each output line so you can distinguish them: `[main:OUT]`, `[musiconly:ERR]`, etc.
+* Gracefully shuts both down on Ctrl+C (SIGINT) or SIGTERM.
+
+Environment tips:
+* You do NOT need to export any `DISCORD_TOKEN` variables; the code resolves the active token from `config.json` based on `COMMAND_PROFILE`.
+* Advanced (optional): setting `DISCORD_TOKEN` will override the profile token for that one process, but this is not needed in normal usage.
+
+Future enhancements (easy to add later): auto-restart flags, health pings, unified structured JSON logs.
+
 ## Requirements
 - Python 3.9 or higher
 - **discord.py** ≥ 2.3
@@ -32,6 +88,10 @@ A Discord bot that tells jokes, roasts your friends, gives compliments, and read
 4. **Start the bot**
     ```
     python tonbot.py
+    ```
+    Or with module (recommended):
+    ```bash
+    DISCORD_TOKEN=xxxxx python -m discordbot.main
     ```
 ## Main Commands
 - `/help` – Shows all bot commands
