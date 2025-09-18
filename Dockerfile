@@ -13,8 +13,7 @@ RUN pip install --upgrade pip && \
 
 # Only copy source after installing requirements (better cache)
 COPY discordbot /app/discordbot
-
-# Keep source, not needed except for COPY downstream
+COPY Audio /app/Audio
 
 # 2. Final image: only what's needed for runtime
 FROM python:3.13-slim
@@ -29,6 +28,7 @@ COPY --from=build /install /usr/local
 
 # Copy source
 COPY --from=build /app/discordbot /app/discordbot
+COPY --from=build /app/Audio /app/Audio
 
 # Minimize layers: create dir while copying if possible
 RUN mkdir -p /app/discordbot/data
@@ -38,4 +38,4 @@ WORKDIR /app/discordbot
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=UTF-8
 
-CMD ["python", "main.py"]
+CMD ["python3", "-m", "discordbot.run_both"]
