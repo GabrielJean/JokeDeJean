@@ -33,7 +33,7 @@ COPY --from=build /app/Audio /app/Audio
 # Minimize layers: create dir while copying if possible
 RUN mkdir -p /app/discordbot/data
 
-WORKDIR /app/discordbot
+WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=UTF-8
