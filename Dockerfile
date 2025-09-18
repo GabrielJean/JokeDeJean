@@ -13,7 +13,7 @@ RUN pip install --upgrade pip && \
 
 # Only copy source after installing requirements (better cache)
 COPY discordbot /app/discordbot
-COPY Audio /app/Audio
+COPY discordbot/Audio /app/Audio
 
 # 2. Final image: only what's needed for runtime
 FROM python:3.13-slim
