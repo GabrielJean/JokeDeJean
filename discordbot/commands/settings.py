@@ -1,7 +1,23 @@
 import discord
 from discord import app_commands
-from history import log_command
-from guild_settings import get_guild_settings, set_guild_setting, reset_guild_settings, clear_guild_setting, get_tts_instructions_for
+try:
+    from ..history import log_command  # type: ignore
+    from ..guild_settings import (
+        get_guild_settings,
+        set_guild_setting,
+        reset_guild_settings,
+        clear_guild_setting,
+        get_tts_instructions_for,
+    )  # type: ignore
+except ImportError:  # script fallback
+    from history import log_command  # type: ignore
+    from guild_settings import (
+        get_guild_settings,
+        set_guild_setting,
+        reset_guild_settings,
+        clear_guild_setting,
+        get_tts_instructions_for,
+    )  # type: ignore
 
 async def setup(bot):
     # ----- UI Components -----

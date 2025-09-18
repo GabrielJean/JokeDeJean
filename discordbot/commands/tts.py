@@ -2,10 +2,16 @@ import discord
 from discord import app_commands
 import tempfile
 import asyncio
-from tts_util import run_tts
-from audio_player import play_audio, get_voice_channel, skip_audio
-from history import log_command
-from guild_settings import get_tts_instructions_for
+try:
+    from ..tts_util import run_tts
+    from ..audio_player import play_audio, get_voice_channel, skip_audio
+    from ..history import log_command
+    from ..guild_settings import get_tts_instructions_for
+except ImportError:  # script fallback
+    from tts_util import run_tts  # type: ignore
+    from audio_player import play_audio, get_voice_channel, skip_audio  # type: ignore
+    from history import log_command  # type: ignore
+    from guild_settings import get_tts_instructions_for  # type: ignore
 
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_overall = 6000

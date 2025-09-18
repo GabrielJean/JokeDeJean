@@ -2,12 +2,19 @@ import discord
 from discord import app_commands
 import tempfile
 import asyncio
-from gpt_util import run_gpt
-from tts_util import run_tts
-from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # Add skip_audio_by_guild import
-from history import log_command
-from guild_settings import get_tts_instructions_for
 import os
+try:
+    from ..gpt_util import run_gpt  # type: ignore
+    from ..tts_util import run_tts  # type: ignore
+    from ..audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
+    from ..history import log_command  # type: ignore
+    from ..guild_settings import get_tts_instructions_for  # type: ignore
+except ImportError:  # script fallback
+    from gpt_util import run_gpt  # type: ignore
+    from tts_util import run_tts  # type: ignore
+    from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
+    from history import log_command  # type: ignore
+    from guild_settings import get_tts_instructions_for  # type: ignore
 
 # --- UI Components (adapted from roast.py) ---
 

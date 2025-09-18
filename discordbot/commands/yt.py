@@ -2,8 +2,12 @@ import discord
 from discord import app_commands
 import asyncio
 import yt_dlp
-from audio_player import play_audio, play_ytdlp_stream, get_voice_channel, skip_audio_by_guild
-from history import log_command
+try:
+    from ..audio_player import play_audio, play_ytdlp_stream, get_voice_channel, skip_audio_by_guild
+    from ..history import log_command
+except ImportError:  # script fallback
+    from audio_player import play_audio, play_ytdlp_stream, get_voice_channel, skip_audio_by_guild  # type: ignore
+    from history import log_command  # type: ignore
 from concurrent.futures import ProcessPoolExecutor
 
 YTDLP_EXECUTOR = ProcessPoolExecutor(max_workers=6)

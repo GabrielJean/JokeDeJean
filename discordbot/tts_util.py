@@ -1,8 +1,21 @@
 import requests
-from bot_instance import get_config
+"""TTS utility helper.
+
+Uses the config accessor from bot_instance. Supports both package execution
+(python -m discordbot.main) and direct script execution by providing a
+relative-first then absolute import fallback for get_config.
+"""
+try:  # Package relative import (python -m discordbot.main)
+    from .bot_instance import get_config  # type: ignore
+except Exception:  # pragma: no cover - fallback when run as script
+    try:
+        from bot_instance import get_config  # type: ignore
+    except Exception:  # Final fallback – define a stub to avoid crash
+        def get_config():  # type: ignore
+            return {}
 
 def run_tts(joke_text, filename, voice, instructions):
-    config = get_config()
+    config = get_config() or {}
     try:
         resp = requests.post(
             config["tts_url"],

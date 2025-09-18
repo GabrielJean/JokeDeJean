@@ -2,11 +2,17 @@ import discord
 from discord import app_commands
 import tempfile
 import asyncio
-from gpt_util import run_gpt
-from tts_util import run_tts
-from audio_player import play_audio, get_voice_channel
-from history import log_command
 import os
+try:
+    from ..gpt_util import run_gpt
+    from ..tts_util import run_tts
+    from ..audio_player import play_audio, get_voice_channel
+    from ..history import log_command
+except ImportError:  # fallback when executed as script
+    from gpt_util import run_gpt  # type: ignore
+    from tts_util import run_tts  # type: ignore
+    from audio_player import play_audio, get_voice_channel  # type: ignore
+    from history import log_command  # type: ignore
 
 DEFAULT_GPT_PROMPT = (
     "You are a helpful assistant. Reply in the language in which the question is asked, either English or French."
