@@ -3,6 +3,7 @@ from discord import app_commands
 import tempfile
 import asyncio
 import os
+import json
 try:
     from ..gpt_util import run_gpt
     from ..tts_util import run_tts
@@ -14,9 +15,19 @@ except ImportError:  # fallback when executed as script
     from audio_player import play_audio, get_voice_channel  # type: ignore
     from history import log_command  # type: ignore
 
+# Load config for prompts
+CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
 DEFAULT_GPT_PROMPT = (
     "You are a helpful assistant. Reply in the language in which the question is asked, either English or French."
 )
+
+# Load prompts from config with fallbacks
+prompts = config.get("prompts", {})
+gpt_command_default = prompts.get("bot_system_prompt", DEFAULT_GPT_PROMPT)
+short_reply_suffix = prompts.get("short_reply_suffix", " Reply in 1–2 short sentences.")
 
 # -------- GPT Interactive View and Modal --------
 
@@ -179,8 +190,8 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
     await interaction.followup.send(f"Envoi à {bot_display_name}...", ephemeral=True)
     # use default prompt unless user customizes
     # Add concise output hint to reduce empty content on small models
-    base_system = prompt if prompt else DEFAULT_GPT_PROMPT
-    system_prompt = base_system + " Reply in 1–2 short sentences."
+    base_system = prompt if prompt else gpt_command_default
+    system_prompt = base_system + short_reply_suffix
     loop = asyncio.get_running_loop()
     try:
         # Allow longer answers in /gpt: ~600 completion tokens
@@ -209,10 +220,11 @@ async def do_gpt(interaction, question, prompt, lecture_vocale):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
-            success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, short_reply, filename, "ash", instructions),
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, short_reply, filename, instructions),
                 timeout=20
             )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if success:
                 await asyncio.wait_for(play_audio(interaction, filename, vc_channel), timeout=30)
         except Exception:

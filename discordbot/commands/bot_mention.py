@@ -25,7 +25,11 @@ DEFAULT_BOT_SYSTEM_PROMPT = (
     "Don't explain your jokes, don't introduce yourself, just reply naturally as a friend would. "
     "User messages may be prefixed with 'Name:'. Do not include your own name or any speaker label in your replies—just write the message itself."
 )
-bot_system_prompt = config.get("bot_system_prompt", DEFAULT_BOT_SYSTEM_PROMPT)
+
+# Load prompts from config with fallbacks
+prompts = config.get("prompts", {})
+bot_system_prompt = prompts.get("bot_system_prompt", DEFAULT_BOT_SYSTEM_PROMPT)
+short_reply_suffix = prompts.get("short_reply_suffix", " Keep replies to 1–2 short sentences. Never include your own name or any speaker label in your messages; just write the message itself.")
 
 MAX_HISTORY = 15
 
@@ -84,10 +88,8 @@ class BotMentionCog(commands.Cog):
 
         # Dynamically format the prompt with the bot's display name
         base_system_prompt = bot_system_prompt.format(bot_name=bot_display_name)
-        dynamic_system_prompt = (
-            base_system_prompt
-            + " Keep replies to 1–2 short sentences. Never include your own name or any speaker label in your messages; just write the message itself."
-        )
+        dynamic_system_prompt = base_system_prompt + short_reply_suffix
+
 
         # If there are images, avoid duplicating the just-appended user text by removing it from history
         if image_urls:

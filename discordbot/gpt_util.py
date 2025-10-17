@@ -32,7 +32,8 @@ def _get_client():
 def run_gpt(query, system_prompt=None, max_tokens=400):
     cfg = get_config()
     deployment = cfg.get("gpt_model", "azure-gpt-5-nano")
-    default_system = cfg.get("bot_system_prompt")
+    prompts = cfg.get("prompts", {})
+    default_system = prompts.get("bot_system_prompt", "You are a helpful assistant.")
     try:
         client = _get_client()
         # Allow both simple text and full messages list for multi-turn/multimodal
@@ -41,11 +42,11 @@ def run_gpt(query, system_prompt=None, max_tokens=400):
             # Ensure there's a system prompt at the start
             has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
             if not has_system:
-                sys_text = system_prompt or default_system or "You are a helpful assistant."
+                sys_text = system_prompt or default_system
                 messages.insert(0, {"role": "system", "content": sys_text})
         else:
             # Always include a system prompt (explicit > config > default)
-            sys_text = system_prompt or default_system or "You are a helpful assistant."
+            sys_text = system_prompt or default_system
             messages = [
                 {"role": "system", "content": sys_text},
                 {"role": "user", "content": query}

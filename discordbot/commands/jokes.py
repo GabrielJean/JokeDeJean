@@ -46,11 +46,12 @@ async def setup(bot):
             filename = tmp.name
         loop = asyncio.get_running_loop()
         try:
-            success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, joke_text, filename, "ash",
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, joke_text, filename,
                                      "Read this joke with a comic tone, as if you are a stand-up comedian."),
                 timeout=20
             )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return

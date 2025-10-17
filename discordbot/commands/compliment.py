@@ -3,6 +3,7 @@ from discord import app_commands
 import tempfile
 import asyncio
 import os
+import json
 try:
     from ..gpt_util import run_gpt  # type: ignore
     from ..tts_util import run_tts  # type: ignore
@@ -15,6 +16,17 @@ except ImportError:  # script fallback
     from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
     from history import log_command  # type: ignore
     from guild_settings import get_tts_instructions_for  # type: ignore
+
+# Load config for prompts
+CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+prompts = config.get("prompts", {})
+compliment_system_prompt = prompts.get("compliment_system_prompt", "Compliments québécois.")
+compliment_tts_fallback = config.get("tts_instructions", "Québécois")
+
+
 
 # --- UI Components (adapted from roast.py) ---
 
@@ -238,7 +250,7 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
     try:
         texte = await asyncio.wait_for(
             loop.run_in_executor(
-                None, run_gpt, prompt_gpt, "Compliments québécois.", 250
+                None, run_gpt, prompt_gpt, compliment_system_prompt, 250
             ),
             timeout=18
         )
@@ -262,14 +274,15 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
     # Vocal
     vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
-        instructions = get_tts_instructions_for(interaction.guild, "compliment", "Parle avec un accent québécois stéréotypé.")
+        instructions = get_tts_instructions_for(interaction.guild, "compliment", compliment_tts_fallback)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
-            success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, texte, filename, "ash", instructions),
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, texte, filename, instructions),
                 timeout=20
             )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if success:
                 asyncio.create_task(play_audio_and_cleanup(interaction, filename, vc_channel))
                 view = StopPlaybackView(interaction.guild.id, interaction.user.id)

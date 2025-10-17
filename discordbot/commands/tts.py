@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 import tempfile
 import asyncio
+import json
+import os
 try:
     from ..tts_util import run_tts
     from ..audio_player import play_audio, get_voice_channel, skip_audio
@@ -12,6 +14,14 @@ except ImportError:  # script fallback
     from audio_player import play_audio, get_voice_channel, skip_audio  # type: ignore
     from history import log_command  # type: ignore
     from guild_settings import get_tts_instructions_for  # type: ignore
+
+# Load config for TTS instructions
+CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+say_vc_tts_fallback = config.get("tts_instructions", "Québécois")
+
 
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
     max_overall = 6000
@@ -88,11 +98,12 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
-            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", "Parle avec un accent québécois stéréotypé.")
-            success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, msg, filename, "ash", style),
+            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", say_vc_tts_fallback)
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, msg, filename, style),
                 timeout=20
             )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
@@ -147,11 +158,12 @@ async def setup(bot):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             filename = tmp.name
         try:
-            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", "Parle avec un accent québécois stéréotypé.")
-            success = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, msg, filename, "ash", style),
+            style = instr or get_tts_instructions_for(interaction.guild, "say_vc", say_vc_tts_fallback)
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, msg, filename, style),
                 timeout=20
             )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
