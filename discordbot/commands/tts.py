@@ -20,7 +20,7 @@ CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'con
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-say_vc_tts_fallback = config.get("tts_instructions", "Québécois")
+say_vc_tts_fallback = config["tts_default_instructions"]
 
 
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
@@ -72,7 +72,7 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
         style=discord.TextStyle.short,
         required=False,
         max_length=250,
-        placeholder="Exemple : Ton enfantin, ou accent québécois"
+        placeholder="Exemple : Ton enfantin, ou accent parisien"
     )
     async def on_submit(self, interaction: discord.Interaction):
         msg = self.message.value.strip()
@@ -95,7 +95,7 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
             return
         await interaction.response.defer(thinking=True, ephemeral=False)
         loop = asyncio.get_running_loop()
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             filename = tmp.name
         try:
             style = instr or get_tts_instructions_for(interaction.guild, "say_vc", say_vc_tts_fallback)
@@ -155,7 +155,7 @@ async def setup(bot):
             return
         await interaction.response.defer(thinking=True, ephemeral=False)
         loop = asyncio.get_running_loop()
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             filename = tmp.name
         try:
             style = instr or get_tts_instructions_for(interaction.guild, "say_vc", say_vc_tts_fallback)

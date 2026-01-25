@@ -42,7 +42,7 @@ async def setup(bot):
         if not vc_channel:
             await interaction.followup.send("Vous devez être dans un salon vocal, ou préciser un vocal !", ephemeral=True)
             return
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             filename = tmp.name
         loop = asyncio.get_running_loop()
         try:
@@ -76,19 +76,3 @@ async def setup(bot):
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception:
             await interaction.followup.send("Erreur pendant la lecture !", ephemeral=True)
-
-    @bot.tree.command(name="penis", description="Joue un son spécial !")
-    @app_commands.describe(voice_channel="Salon vocal cible (optionnel)")
-    async def penis(interaction: discord.Interaction, voice_channel: discord.VoiceChannel = None):
-        log_command(interaction.user, "penis", {"voice_channel": str(voice_channel) if voice_channel else None}, guild=interaction.guild)
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        file = os.path.join(AUDIO_DIR, "sort-pas-ton-penis.mp3")
-        vc_channel = get_voice_channel(interaction, voice_channel)
-        if not vc_channel:
-            await interaction.followup.send("Vous devez être dans un salon vocal, ou préciser un vocal !", ephemeral=True)
-            return
-        try:
-            asyncio.create_task(play_audio(interaction, file, vc_channel))
-            await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
-        except Exception:
-            await interaction.followup.send("Erreur pendant la lecture.", ephemeral=True)

@@ -30,7 +30,6 @@ from typing import Iterable, List
 ALL_MODULES: List[str] = [
     "jokes",
     "tts",
-    "gpt",
     "music",
     "moderation",
     "say",
@@ -40,7 +39,6 @@ ALL_MODULES: List[str] = [
     "compliment",
     "yt",
     "bot_mention",
-    "settings",
     "suno",
 ]
 
@@ -48,11 +46,11 @@ ALL_MODULES: List[str] = [
 PROFILE_MAP = {
     # main -> everything EXCEPT music-related modules
     "main": [
-        "jokes", "tts", "gpt", "moderation", "say", "util", "help", "roast", "compliment", "bot_mention", "settings"
+        "jokes", "tts", "moderation", "say", "util", "help", "roast", "compliment", "bot_mention"
     ],
-    # musiconly -> ONLY music-related modules (plus help + util + settings + moderation for basic control)
+    # musiconly -> ONLY music-related modules (plus help + util + moderation for basic control)
     "musiconly": [
-        "music", "yt", "suno", "util", "help", "settings", "moderation", "bot_mention"
+        "music", "yt", "suno", "util", "help", "moderation", "bot_mention"
     ],
     # Internal fallback
     "all": ALL_MODULES,
@@ -64,7 +62,13 @@ def _resolve_allowed_modules() -> List[str]:
     raw = os.getenv("COMMAND_MODULES")
     if raw:
         mods = [m.strip() for m in raw.split(",") if m.strip()]
-        return [m for m in mods if m in ALL_MODULES]
+        filtered = [m for m in mods if m in ALL_MODULES]
+        if not filtered:
+            logging.warning(
+                "COMMAND_MODULES is set but no valid modules were found; falling back to ALL_MODULES"
+            )
+            return ALL_MODULES
+        return filtered
     profile = os.getenv("COMMAND_PROFILE", "all").lower()
     allowed = PROFILE_MAP.get(profile)
     if not allowed:

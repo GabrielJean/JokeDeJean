@@ -11,11 +11,9 @@ from discord.ext import commands
 COMMAND_DESCRIPTIONS = {
     "joke": "Joue une blague Reddit en vocal. Params: voice_channel",
     "jokeqc": "Blague québécoise .mp3. Params: voice_channel",
-    "penis": "Joue un son spécial. Params: voice_channel",
     "say-vc": "Lecture TTS personnalisée. Params: message, instructions, sauvegarder_instructions, voice_channel",
-    "gpt": "GPT-4o Q&A, réponse lue. Params: query, lecture_vocale, prompt, sauvegarder_prompt",
-    "roast": "Roast fun, accent québécois ! Params: cible, intensite, details, voice_channel",
-    "compliment": "Compliment drôle/style québécois. Params: cible, details, voice_channel",
+    "roast": "Roast fun, accent parisien ! Params: cible, intensite, details, voice_channel",
+    "compliment": "Compliment fun, accent parisien ! Params: cible, intensite, details, voice_channel",
     "bloque": "Bloque le bot pendant 2h de rejoindre ton salon vocal actuel.",
     "debloque": "Débloque le bot de rejoindre ton salon vocal actuel.",
     "leave": "Fait quitter le salon vocal au bot.",
@@ -26,7 +24,6 @@ COMMAND_DESCRIPTIONS = {
     "suno": "Lit l'audio d'une chanson Suno (https://suno.com/song/...). Params: url, voice_channel, loop",
     "skip": "Passe au prochain message TTS en vocal (skip actuel). Params: voice_channel",
     "music": "Musique YouTube rotation aléatoire. Params: category, voice_channel",
-    "settings": "Réglages TTS (UI si aucun paramètre). Params: target, tts_instructions, reset",
 }
 
 async def setup(bot):

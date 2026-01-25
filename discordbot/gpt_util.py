@@ -1,9 +1,14 @@
-from openai import AzureOpenAI
 import logging
+from xai_sdk import Client
+try:
+    from xai_sdk.chat import user, system, assistant
+except Exception:  # pragma: no cover - assistant helper may not exist
+    from xai_sdk.chat import user, system  # type: ignore
+    assistant = None  # type: ignore
 
-"""GPT utility wrapper.
+"""GPT utility wrapper (xAI SDK).
 
-Provides run_gpt() with robust handling of Azure OpenAI SDK response shapes.
+Provides run_gpt() with robust handling of xAI SDK response shapes.
 Imports get_config with a relative-first strategy so it functions under
 `python -m discordbot.main` as well as direct script execution.
 """
@@ -22,105 +27,144 @@ def _get_client():
     global _client
     if _client is None:
         cfg = get_config()
-        _client = AzureOpenAI(
-            api_version=cfg.get("azure_api_version", "2024-12-01-preview"),
-            azure_endpoint=cfg.get("azure_endpoint"),
-            api_key=cfg.get("api_key"),
+        _client = Client(
+            api_key=cfg["xai_api_key"],
+            timeout=3600,
         )
     return _client
 
+
+def _extract_response_text(response) -> str:
+    # Try common response shapes from xAI SDK
+    for attr in ("output_text", "text", "content"):
+        val = getattr(response, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # Try response.output list (Responses API style)
+    output = getattr(response, "output", None)
+    if isinstance(output, list):
+        parts = []
+        for item in output:
+            content = getattr(item, "content", None)
+            if isinstance(content, list):
+                for c in content:
+                    text = getattr(c, "text", None)
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+        if parts:
+            return "\n".join(parts).strip()
+    return ""
+
+def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
+                 frequency_penalty: float, presence_penalty: float):
+    """Call chat.sample with best-effort support for optional parameters."""
+    candidates = [
+        {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+        },
+        {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+        },
+        {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+        {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+        {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        },
+        {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        },
+        {"max_tokens": max_tokens},
+        {"max_output_tokens": max_tokens},
+        {},
+    ]
+    last_type_error = None
+    for params in candidates:
+        try:
+            return chat.sample(**params)
+        except TypeError as ex:
+            last_type_error = ex
+            continue
+    if last_type_error:
+        raise last_type_error
+    return chat.sample()
+
 def run_gpt(query, system_prompt=None, max_tokens=400):
     cfg = get_config()
-    deployment = cfg.get("gpt_model", "azure-gpt-5-nano")
-    prompts = cfg.get("prompts", {})
-    default_system = prompts.get("bot_system_prompt", "You are a helpful assistant.")
+    deployment = cfg["gpt_model"]
+    prompts = cfg["prompts"]
+    default_system = prompts["bot_system_prompt"]
+    diversity_instruction = cfg["gpt_diversity_instruction"]
+    temperature = float(cfg["gpt_temperature"])
+    top_p = float(cfg["gpt_top_p"])
+    frequency_penalty = float(cfg["gpt_frequency_penalty"])
+    presence_penalty = float(cfg["gpt_presence_penalty"])
     try:
         client = _get_client()
+        chat = client.chat.create(model=deployment, store_messages=False)
+
         # Allow both simple text and full messages list for multi-turn/multimodal
         if isinstance(query, list):
             messages = list(query)
-            # Ensure there's a system prompt at the start
-            has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
+            has_system = any(isinstance(m, dict) and m.get("role") in {"system", "developer"} for m in messages)
             if not has_system:
                 sys_text = system_prompt or default_system
-                messages.insert(0, {"role": "system", "content": sys_text})
+                if diversity_instruction:
+                    sys_text = f"{sys_text}\n\n{diversity_instruction}"
+                chat.append(system(sys_text))
+            elif diversity_instruction:
+                chat.append(system(diversity_instruction))
+            for m in messages:
+                role = m.get("role") if isinstance(m, dict) else None
+                content = m.get("content") if isinstance(m, dict) else None
+                if role in {"system", "developer"} and content:
+                    if diversity_instruction and diversity_instruction not in content:
+                        content = f"{content}\n\n{diversity_instruction}"
+                    chat.append(system(content))
+                elif role == "assistant" and content:
+                    if assistant:
+                        chat.append(assistant(content))
+                    else:
+                        chat.append({"role": "assistant", "content": content})
+                elif content:
+                    chat.append(user(content))
         else:
-            # Always include a system prompt (explicit > config > default)
             sys_text = system_prompt or default_system
-            messages = [
-                {"role": "system", "content": sys_text},
-                {"role": "user", "content": query}
-            ]
-        resp = client.chat.completions.create(
-            messages=messages,
-            max_completion_tokens=max_tokens,
-            response_format={"type": "text"},
-            model=deployment
+            if diversity_instruction:
+                sys_text = f"{sys_text}\n\n{diversity_instruction}"
+            chat.append(system(sys_text))
+            chat.append(user(query))
+
+        response = _sample_chat(
+            chat,
+            max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
         )
-        try:
-            choice = resp.choices[0]
-            msg = choice.message
-            # If the SDK returns a direct string
-            if isinstance(getattr(msg, "content", None), str) and msg.content:
-                return msg.content.strip()
-            # If the SDK returns content parts (multimodal style)
-            parts = getattr(msg, "content", None)
-            collected = []
-            if isinstance(parts, list):
-                for p in parts:
-                    try:
-                        if isinstance(p, dict):
-                            if p.get("type") == "text" and p.get("text"):
-                                collected.append(p["text"])
-                        else:
-                            # Pydantic object with attributes
-                            if getattr(p, "type", None) == "text" and getattr(p, "text", None):
-                                collected.append(p.text)
-                    except Exception:
-                        continue
-                if collected:
-                    return "".join(collected).strip()
-            # Refusal handling
-            refusal = getattr(msg, "refusal", None)
-            if refusal:
-                logging.warning(f"Azure content refusal: {refusal}")
-                return refusal.strip()
-            # Log finish_reason and usage when content empty
-            logging.error(
-                "Azure 200 but empty content. finish_reason=%s, usage=%s, first_choice=%s",
-                getattr(choice, "finish_reason", None),
-                getattr(resp, "usage", None),
-                str(choice)[:800]
-            )
-            # Retry once with a very small budget and a strict instruction to force output
-            try:
-                retry_messages = messages + [{"role": "system", "content": "Reply with ONE short sentence only. No analysis."}]
-                retry_resp = client.chat.completions.create(
-                    messages=retry_messages,
-                    max_completion_tokens=min(64, max_tokens),
-                    response_format={"type": "text"},
-                    model=deployment
-                )
-                retry_choice = retry_resp.choices[0]
-                retry_msg = retry_choice.message
-                if isinstance(getattr(retry_msg, "content", None), str) and retry_msg.content:
-                    return retry_msg.content.strip()
-                retry_parts = getattr(retry_msg, "content", None)
-                retry_collected = []
-                if isinstance(retry_parts, list):
-                    for p in retry_parts:
-                        if isinstance(p, dict) and p.get("type") == "text" and p.get("text"):
-                            retry_collected.append(p["text"])
-                        elif getattr(p, "type", None) == "text" and getattr(p, "text", None):
-                            retry_collected.append(p.text)
-                if retry_collected:
-                    return "".join(retry_collected).strip()
-            except Exception as rex:
-                logging.error(f"Retry after empty content failed: {rex}")
-            return "(aucune réponse)"
-        except Exception as ex:
-            logging.error(f"Azure SDK unexpected response shape: {ex}; obj={resp}")
-            return "(aucune réponse)"
+        text = _extract_response_text(response)
+        if text:
+            return text
+        logging.error("Empty content from xAI response: %s", str(response)[:800])
+        return "(aucune réponse)"
     except Exception as ex:
-        logging.error(f"Azure SDK request failed: {ex}")
-        return "Erreur : impossible de contacter Azure OpenAI."
+        logging.error(f"SDK request failed: {ex}")
+        return "Erreur : impossible de contacter xAI."
