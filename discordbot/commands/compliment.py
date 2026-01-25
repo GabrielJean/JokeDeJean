@@ -10,7 +10,7 @@ try:
     from ..audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
     from ..history import log_command  # type: ignore
     from ..guild_settings import get_tts_instructions_for  # type: ignore
-except ImportError:  # script fallback
+except ImportError:  # Script fallback
     from gpt_util import run_gpt  # type: ignore
     from tts_util import run_tts  # type: ignore
     from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
@@ -22,13 +22,51 @@ CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'con
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-prompts = config.get("prompts", {})
-compliment_system_prompt = prompts.get("compliment_system_prompt", "Compliments québécois.")
-compliment_tts_fallback = config.get("tts_instructions", "Québécois")
+prompts = config["prompts"]
+compliment_system_prompt = prompts["compliment_system_prompt"]
+compliment_tts_fallback = (
+    config["tts_default_instructions"]
+)
+_raw_compliment_intensity = config["intensity_labels"]["compliment"]
+compliment_intensity_labels = {int(key): value for key, value in _raw_compliment_intensity.items()}
 
 
 
-# --- UI Components (adapted from roast.py) ---
+# --- Stop Playback View ---
+
+class StopPlaybackView(discord.ui.View):
+    def __init__(self, guild_id: int, initiator_id: int, *, timeout=120):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.initiator_id = initiator_id
+
+    @discord.ui.button(label="⏹️ Arrêter la lecture", style=discord.ButtonStyle.danger)
+    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message(
+                "Seul celui qui a lancé la lecture peut l'arrêter.",
+                ephemeral=True
+            )
+            return
+        success = skip_audio_by_guild(self.guild_id)
+        if success:
+            await interaction.response.send_message(
+                "Lecture stoppée et bot déconnecté du vocal.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "Pas de lecture en cours.",
+                ephemeral=True
+            )
+        button.disabled = True
+        try:
+            await interaction.message.edit(view=self)
+        except discord.NotFound:
+            pass
+        except Exception:
+            pass
+        self.stop()
 
 class MemberSelect(discord.ui.Select):
     def __init__(self, members, parent_view, current_id=None):
@@ -67,13 +105,11 @@ class MemberSelect(discord.ui.Select):
         )
 
 class IntensitySelect(discord.ui.Select):
-    def __init__(self, parent_view, default=2):
+    def __init__(self, parent_view, default=1):
         options = [
-            discord.SelectOption(label="Gentil (1)", value="1", default=(default == 1)),
-            discord.SelectOption(label="Chaleureux (2)", value="2", default=(default == 2)),
-            discord.SelectOption(label="Élogieux (3)", value="3", default=(default == 3)),
-            discord.SelectOption(label="Flatteur (4)", value="4", default=(default == 4)),
-            discord.SelectOption(label="Épique (5)", value="5", default=(default == 5)),
+            discord.SelectOption(label="Doux (1)", value="1", default=(default == 1)),
+            discord.SelectOption(label="Piquant (2)", value="2", default=(default == 2)),
+            discord.SelectOption(label="Brûlant (3)", value="3", default=(default == 3)),
         ]
         super().__init__(
             placeholder="Niveau d'intensité",
@@ -100,7 +136,7 @@ class ComplimentDetailsButton(discord.ui.Button):
 
         class DetailModal(discord.ui.Modal, title="Ajouter un détail pour le compliment"):
             details = discord.ui.TextInput(
-                label="Détail ou qualité à flatter",
+                label="Détail ou meme à exploiter",
                 style=discord.TextStyle.paragraph,
                 default=parent_view.details
             )
@@ -142,13 +178,14 @@ class ComplimentSetupView(discord.ui.View):
         self.interaction = interaction
         self.members = voice_members
         self.chosen_target_id = None
-        self.chosen_intensite = 2
+        self.chosen_intensite = 1
         self.details = ""
         self.demarrer_button = ComplimentStartButton(self)
         self.build_selects()
         self.add_item(ComplimentDetailsButton(self))
         self.add_item(self.demarrer_button)
     def build_selects(self):
+        # Remove old selects if any
         for item in list(self.children):
             if isinstance(item, (MemberSelect, IntensitySelect)):
                 self.remove_item(item)
@@ -175,43 +212,7 @@ class ComplimentSetupView(discord.ui.View):
         except Exception:
             pass
 
-# --- Stop Playback View (copied from roast.py) ---
-
-class StopPlaybackView(discord.ui.View):
-    def __init__(self, guild_id: int, initiator_id: int, *, timeout=120):
-        super().__init__(timeout=timeout)
-        self.guild_id = guild_id
-        self.initiator_id = initiator_id
-
-    @discord.ui.button(label="⏹️ Arrêter la lecture", style=discord.ButtonStyle.danger)
-    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.initiator_id:
-            await interaction.response.send_message(
-                "Seul celui qui a lancé la lecture peut l'arrêter.",
-                ephemeral=True
-            )
-            return
-        success = skip_audio_by_guild(self.guild_id)
-        if success:
-            await interaction.response.send_message(
-                "Lecture stoppée et bot déconnecté du vocal.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                "Pas de lecture en cours.",
-                ephemeral=True
-            )
-        button.disabled = True
-        try:
-            await interaction.message.edit(view=self)
-        except discord.NotFound:
-            pass
-        except Exception:
-            pass
-        self.stop()
-
-# --- Play audio and cleanup after playback (copied from roast.py) ---
+# --- Play audio and cleanup after playback ---
 
 async def play_audio_and_cleanup(interaction, filename, vc_channel):
     try:
@@ -223,29 +224,26 @@ async def play_audio_and_cleanup(interaction, filename, vc_channel):
             pass
 
 # --- Main compliment logic ---
+
 async def do_compliment(interaction, cible_id, intensite, details, voice_channel: discord.VoiceChannel = None):
     guild = interaction.guild
     cible = guild.get_member(int(cible_id)) if cible_id and cible_id != "none" else None
     if cible is None:
         await interaction.followup.send("Impossible de trouver la cible dans ce serveur.", ephemeral=True)
         return
-    intensite = max(1, min(5, int(intensite)))
-    noms_intensite = {
-        1: "gentil",
-        2: "chaleureux",
-        3: "élogieux",
-        4: "flatteur",
-        5: "épique"
-    }
+    intensite = max(1, min(3, int(intensite)))
+    noms_intensite = compliment_intensity_labels
     username = cible.display_name
-    ajout_details = f" Met en valeur : {details}" if details else ""
+    ajout_details = ""
+    if details:
+        ajout_details = f" Utilise : {details}"
     prompt_gpt = (
-        f"Fais un compliment fun à '{username}'. "
-        f"Niveau {intensite}/5 : {noms_intensite[intensite]}. "
+        f"Fais un compliment pour '{username}'. "
+        f"Niveau {intensite}/3 : {noms_intensite[intensite]}. "
         f"{ajout_details} "
-        "Accent humoriste québécois, max 4 phrases."
+        "Humour direct, max 4 phrases, pas d'intro."
     )
-    titre = f"Compliment pour {username} (niv. {intensite})"
+    titre = f"Compliment de {username} (niv. {intensite})"
     loop = asyncio.get_running_loop()
     try:
         texte = await asyncio.wait_for(
@@ -255,12 +253,16 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
             timeout=18
         )
     except Exception as ex:
-        await interaction.followup.send(
-            f"Erreur génération compliment: {ex}", ephemeral=True
-        )
+        await interaction.followup.send(f"Erreur génération compliment: {ex}", ephemeral=True)
         return
-    embed = discord.Embed(title=titre, description=texte[:1024], color=0x41d98e)
-    await interaction.followup.send(embed=embed)
+    tts_text = (texte or "").strip()
+    display_text = tts_text
+    if len(display_text) > 4096:
+        display_text = display_text[:4096]
+        tts_text = display_text
+    embed = discord.Embed(title=titre, description=display_text,
+                          color=0x33cc66 if intensite < 3 else 0x00aa44)
+    message = await interaction.followup.send(embed=embed)
     log_command(
         interaction.user, "compliment",
         {
@@ -275,19 +277,33 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
     vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
         instructions = get_tts_instructions_for(interaction.guild, "compliment", compliment_tts_fallback)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             filename = tmp.name
         try:
             success_tuple = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, texte, filename, instructions),
+                loop.run_in_executor(None, run_tts, tts_text, filename, instructions),
                 timeout=20
             )
             success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
+            spoken_text = ""
+            if isinstance(success_tuple, tuple) and len(success_tuple) > 1:
+                spoken_text = (success_tuple[1] or "").strip()
             if success:
+                if spoken_text and spoken_text != display_text:
+                    new_display = spoken_text[:4096]
+                    new_embed = discord.Embed(
+                        title=titre,
+                        description=new_display,
+                        color=0x33cc66 if intensite < 3 else 0x00aa44
+                    )
+                    try:
+                        await message.edit(embed=new_embed)
+                    except Exception:
+                        pass
                 asyncio.create_task(play_audio_and_cleanup(interaction, filename, vc_channel))
                 view = StopPlaybackView(interaction.guild.id, interaction.user.id)
                 await interaction.followup.send(
-                    "Compliment lancé au vocal!", ephemeral=True, view=view
+                    "Compliment balancé au vocal!", ephemeral=True, view=view
                 )
             else:
                 await interaction.followup.send("Erreur lors de la génération audio TTS.", ephemeral=True)
@@ -305,8 +321,8 @@ async def setup(bot):
     )
     @app_commands.describe(
         cible="Membre à complimenter (si vide, ouvre l'UI)",
-        intensite="Intensité de 1 à 5 (par défaut 2)",
-        details="Détails à mettre en valeur (optionnel)",
+        intensite="Intensité de 1 à 3 (par défaut 1)",
+        details="Détails à utiliser (optionnel)",
         voice_channel="Salon vocal cible (optionnel)"
     )
     async def compliment(
@@ -316,7 +332,7 @@ async def setup(bot):
         details: str = None,
         voice_channel: discord.VoiceChannel = None
     ):
-        # Route UI si aucun paramètre fourni
+        # Route UI si aucun paramètre de contenu n'est fourni
         if cible is None and intensite is None and (details is None or details.strip() == ""):
             user = interaction.user
             if not user.voice or not user.voice.channel:
@@ -346,7 +362,7 @@ async def setup(bot):
                 ephemeral=True
             )
             return
-        level = 2 if intensite is None else max(1, min(5, int(intensite)))
+        level = 1 if intensite is None else max(1, min(3, int(intensite)))
         det = details.strip() if details else ""
         await interaction.response.defer(thinking=True, ephemeral=True)
         await do_compliment(

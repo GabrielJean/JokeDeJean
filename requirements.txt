@@ -3,4 +3,6 @@ git+https://github.com/Rapptz/discord.py.git
 PyNaCl
 requests
 yt_dlp
-openai>=1.33.0
+xai-sdk
+websockets
+edge-tts

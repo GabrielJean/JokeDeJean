@@ -22,9 +22,13 @@ CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'con
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-prompts = config.get("prompts", {})
-roast_system_prompt = prompts.get("roast_system_prompt", "Parle avec un accent québécois stéréotypé.")
-roast_tts_fallback = config.get("tts_instructions", "Québécois")
+prompts = config["prompts"]
+roast_system_prompt = prompts["roast_system_prompt"]
+roast_tts_fallback = (
+    config["tts_default_instructions"]
+)
+_raw_roast_intensity = config["intensity_labels"]["roast"]
+roast_intensity_labels = {int(key): value for key, value in _raw_roast_intensity.items()}
 
 
 
@@ -101,13 +105,11 @@ class MemberSelect(discord.ui.Select):
         )
 
 class IntensitySelect(discord.ui.Select):
-    def __init__(self, parent_view, default=2):
+    def __init__(self, parent_view, default=1):
         options = [
-            discord.SelectOption(label="Très doux (1)", value="1", default=(default == 1)),
-            discord.SelectOption(label="Moqueur (2)", value="2", default=(default == 2)),
-            discord.SelectOption(label="Grinçant (3)", value="3", default=(default == 3)),
-            discord.SelectOption(label="Salé (4)", value="4", default=(default == 4)),
-            discord.SelectOption(label="Punchy (5)", value="5", default=(default == 5)),
+            discord.SelectOption(label="Moqueur (1)", value="1", default=(default == 1)),
+            discord.SelectOption(label="Grinçant (2)", value="2", default=(default == 2)),
+            discord.SelectOption(label="Salé (3)", value="3", default=(default == 3)),
         ]
         super().__init__(
             placeholder="Niveau d'intensité",
@@ -176,7 +178,7 @@ class RoastSetupView(discord.ui.View):
         self.interaction = interaction
         self.members = voice_members
         self.chosen_target_id = None
-        self.chosen_intensite = 2
+        self.chosen_intensite = 1
         self.details = ""
         self.demarrer_button = RoastStartButton(self)
         self.build_selects()
@@ -229,23 +231,17 @@ async def do_roast(interaction, cible_id, intensite, details, voice_channel: dis
     if cible is None:
         await interaction.followup.send("Impossible de trouver la cible dans ce serveur.", ephemeral=True)
         return
-    intensite = max(1, min(5, int(intensite)))
-    noms_intensite = {
-        1: "très doux (taquin)",
-        2: "moqueur",
-        3: "grinçant",
-        4: "salé",
-        5: "franc-parler punchy"
-    }
+    intensite = max(1, min(3, int(intensite)))
+    noms_intensite = roast_intensity_labels
     username = cible.display_name
     ajout_details = ""
     if details:
         ajout_details = f" Utilise : {details}"
     prompt_gpt = (
-        f"Fais un roast québécois sur '{username}'. "
-        f"Niveau {intensite}/5 : {noms_intensite[intensite]}. "
+        f"Fais un roast sur '{username}'. "
+        f"Niveau {intensite}/3 : {noms_intensite[intensite]}. "
         f"{ajout_details} "
-        "Humour direct, accent québécois, max 4 phrases, pas d'intro."
+        "Humour direct, max 4 phrases, pas d'intro."
     )
     titre = f"Roast de {username} (niv. {intensite})"
     loop = asyncio.get_running_loop()
@@ -259,9 +255,14 @@ async def do_roast(interaction, cible_id, intensite, details, voice_channel: dis
     except Exception as ex:
         await interaction.followup.send(f"Erreur génération roast: {ex}", ephemeral=True)
         return
-    embed = discord.Embed(title=titre, description=texte[:1024],
-                          color=0xff8800 if intensite < 4 else 0xff0000)
-    await interaction.followup.send(embed=embed)
+    tts_text = (texte or "").strip()
+    display_text = tts_text
+    if len(display_text) > 4096:
+        display_text = display_text[:4096]
+        tts_text = display_text
+    embed = discord.Embed(title=titre, description=display_text,
+                          color=0xff8800 if intensite < 3 else 0xff0000)
+    message = await interaction.followup.send(embed=embed)
     log_command(
         interaction.user, "roast",
         {
@@ -276,15 +277,29 @@ async def do_roast(interaction, cible_id, intensite, details, voice_channel: dis
     vc_channel = get_voice_channel(interaction, voice_channel)
     if vc_channel:
         instructions = get_tts_instructions_for(interaction.guild, "roast", roast_tts_fallback)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             filename = tmp.name
         try:
             success_tuple = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, texte, filename, instructions),
+                loop.run_in_executor(None, run_tts, tts_text, filename, instructions),
                 timeout=20
             )
             success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
+            spoken_text = ""
+            if isinstance(success_tuple, tuple) and len(success_tuple) > 1:
+                spoken_text = (success_tuple[1] or "").strip()
             if success:
+                if spoken_text and spoken_text != display_text:
+                    new_display = spoken_text[:4096]
+                    new_embed = discord.Embed(
+                        title=titre,
+                        description=new_display,
+                        color=0xff8800 if intensite < 3 else 0xff0000
+                    )
+                    try:
+                        await message.edit(embed=new_embed)
+                    except Exception:
+                        pass
                 asyncio.create_task(play_audio_and_cleanup(interaction, filename, vc_channel))
                 view = StopPlaybackView(interaction.guild.id, interaction.user.id)
                 await interaction.followup.send(
@@ -306,7 +321,7 @@ async def setup(bot):
     )
     @app_commands.describe(
         cible="Membre à roaster (si vide, ouvre l'UI)",
-        intensite="Intensité de 1 à 5 (par défaut 2)",
+        intensite="Intensité de 1 à 3 (par défaut 1)",
         details="Détails à utiliser (optionnel)",
         voice_channel="Salon vocal cible (optionnel)"
     )
@@ -347,7 +362,7 @@ async def setup(bot):
                 ephemeral=True
             )
             return
-        level = 2 if intensite is None else max(1, min(5, int(intensite)))
+        level = 1 if intensite is None else max(1, min(3, int(intensite)))
         det = details.strip() if details else ""
         await interaction.response.defer(thinking=True, ephemeral=True)
         await do_roast(

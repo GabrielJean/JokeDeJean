@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,18 +20,18 @@ with open(config_path, "r") as f:
 # 2. COMMAND_PROFILE mapped token in config['tokens'] (if present)
 # 3. Legacy single 'token' field in config.json
 profile = os.getenv("COMMAND_PROFILE")
-tokens_map = config.get("tokens") if isinstance(config.get("tokens"), dict) else {}
+tokens_map = config["tokens"]
 selected_token = None
 if os.getenv("DISCORD_TOKEN"):
     selected_token = os.getenv("DISCORD_TOKEN")
 elif profile and profile in tokens_map and tokens_map.get(profile):
     selected_token = tokens_map.get(profile)
 else:
-    selected_token = config.get("token", "")
+    selected_token = config["token"]
 config["token"] = selected_token
 
-# API key override
-config["api_key"] = os.getenv("AZURE_OPENAI_API_KEY", config.get("api_key", ""))
+# API key override (xAI only)
+config["xai_api_key"] = os.getenv("XAI_API_KEY") or config["xai_api_key"]
 
 # Per-profile logging (so two processes don't fight over same file) — store under package data dir
 profile_safe = (profile or "single").lower()
@@ -40,14 +41,39 @@ log_path = data_dir / f"bot_{profile_safe}.log"
 if not log_path.exists():
     log_path.touch()
 
+log_format = f"%(asctime)s [%(levelname)s] [{profile_safe}] %(message)s"
+
+class MaxLevelFilter(logging.Filter):
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.addFilter(MaxLevelFilter(logging.INFO))
+stdout_handler.setFormatter(logging.Formatter(log_format))
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.WARNING)
+stderr_handler.setFormatter(logging.Formatter(log_format))
+
+file_handler = logging.FileHandler(str(log_path))
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(log_format))
+
 logging.basicConfig(
     level=logging.INFO,
-    format=f"%(asctime)s [%(levelname)s] [{profile_safe}] %(message)s",
-    handlers=[
-        logging.FileHandler(str(log_path)),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stdout_handler, stderr_handler]
 )
+
+# Reduce discord.py noise unless explicitly overridden
+discord_log_level = os.getenv("DISCORD_LOG_LEVEL", "WARNING").upper()
+logging.getLogger("discord").setLevel(discord_log_level)
+logging.getLogger("discord.client").setLevel(discord_log_level)
+logging.getLogger("discord.gateway").setLevel(discord_log_level)
 
 intents = discord.Intents.default()
 intents.message_content = True

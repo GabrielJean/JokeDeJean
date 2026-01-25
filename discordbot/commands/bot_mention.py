@@ -5,39 +5,46 @@ import logging
 import json
 import os
 import re
+import tempfile
+import time
 from collections import defaultdict, deque
 try:
     from ..gpt_util import run_gpt  # type: ignore
 except ImportError:  # script fallback
     from gpt_util import run_gpt  # type: ignore
+try:
+    from ..tts_util import run_tts  # type: ignore
+    from ..audio_player import play_audio  # type: ignore
+    from ..guild_settings import get_tts_instructions  # type: ignore
+except ImportError:  # script fallback
+    from tts_util import run_tts  # type: ignore
+    from audio_player import play_audio  # type: ignore
+    from guild_settings import get_tts_instructions  # type: ignore
 
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.json'))
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-DEFAULT_BOT_SYSTEM_PROMPT = (
-    "You are {bot_name}, a funny and friendly virtual friend in our private Discord server. "
-    "Reply in the same language as the user's message (English or French), and feel free to mix both if the conversation does. "
-    "Your main goal is to make people smile with clever, playful, and gently teasing remarks, but always be genuine and adapt to the mood of the conversation. "
-    "If the moment calls for real conversation or support, be a good listener and reply appropriately, while keeping a light and friendly tone. "
-    "Join in on in-jokes, refer to previous messages, and interact like a natural part of the friend group. "
-    "Don’t be overly sarcastic or mean, and don’t try to force a joke into every message. "
-    "Don't explain your jokes, don't introduce yourself, just reply naturally as a friend would. "
-    "User messages may be prefixed with 'Name:'. Do not include your own name or any speaker label in your replies—just write the message itself."
-)
-
-# Load prompts from config with fallbacks
-prompts = config.get("prompts", {})
-bot_system_prompt = prompts.get("bot_system_prompt", DEFAULT_BOT_SYSTEM_PROMPT)
-short_reply_suffix = prompts.get("short_reply_suffix", " Keep replies to 1–2 short sentences. Never include your own name or any speaker label in your messages; just write the message itself.")
+# Load prompts from config (no fallbacks)
+prompts = config["prompts"]
+bot_system_prompt = prompts["bot_system_prompt"]
+short_reply_suffix = prompts["short_reply_suffix"]
 
 MAX_HISTORY = 15
+HISTORY_TTL_SECONDS = int(config["mention_history_ttl_seconds"])
+
+
+class _MessageInteraction:
+    def __init__(self, guild, channel):
+        self.guild = guild
+        self.channel = channel
 
 
 class BotMentionCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.channel_histories = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
+        self.channel_active_until = {}
 
     def strip_self_label(self, bot_display_name: str, text: str) -> str:
         # Remove leading "BotName:" or "BotName —" etc.
@@ -59,7 +66,7 @@ class BotMentionCog(commands.Cog):
         return chat
 
     def build_multimodal_messages(self, dynamic_system_prompt, history, current_author, current_text, current_images):
-        # Build messages compatible with AzureOpenAI SDK chat.completions
+        # Build messages compatible with xAI chat messages
         messages = [{"role": "system", "content": dynamic_system_prompt}]
         # Prior history: assistant entries are label-free; user entries keep "Name: ..."
         for (author, content, is_bot) in history:
@@ -122,12 +129,46 @@ class BotMentionCog(commands.Cog):
             logging.error(f"GPT error on mention reply: {ex}")
             return "Sorry, I had a brain freeze... Try again!"
 
+    async def speak_reply_in_vc(self, message: discord.Message, reply_text: str) -> None:
+        if not reply_text or not message.guild:
+            return
+        author_voice = getattr(message.author, "voice", None)
+        if not author_voice or not author_voice.channel:
+            return
+        voice_channel = author_voice.channel
+        loop = asyncio.get_running_loop()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            filename = tmp.name
+        try:
+            instructions = get_tts_instructions(message.guild)
+            success_tuple = await asyncio.wait_for(
+                loop.run_in_executor(None, run_tts, reply_text, filename, instructions),
+                timeout=20
+            )
+            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
+            if not success:
+                logging.warning("TTS generation failed for mention reply.")
+                return
+            interaction = _MessageInteraction(message.guild, message.channel)
+            await play_audio(interaction, filename, voice_channel)
+        except Exception as ex:
+            logging.error("TTS playback failed for mention reply: %s", ex)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
 
+        now = time.time()
+        channel_id = message.channel.id
+        active_until = self.channel_active_until.get(channel_id)
+        if active_until and now > active_until:
+            self.channel_histories[channel_id].clear()
+            self.channel_active_until.pop(channel_id, None)
+            active_until = None
+
         if self.bot.user in message.mentions:
+            self.channel_active_until[channel_id] = now + HISTORY_TTL_SECONDS
             # Get the current name or nickname of the bot in the context server
             if message.guild:
                 me = message.guild.get_member(self.bot.user.id)
@@ -166,6 +207,14 @@ class BotMentionCog(commands.Cog):
 
             # Classic style: actual Discord mention
             await message.channel.send(f"{message.author.mention} {reply_text}")
+
+            # If the user is in a voice channel, join and speak the reply
+            await self.speak_reply_in_vc(message, reply_text)
+        else:
+            if active_until:
+                self.channel_histories[channel_id].append(
+                    (message.author.display_name, message.clean_content, False)
+                )
 
 
 async def setup(bot):
