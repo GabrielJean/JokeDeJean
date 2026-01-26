@@ -11,8 +11,29 @@ BASE_DIR = Path(__file__).resolve().parent
 # Always load config relative to this file so running with `python -m discordbot.main`
 # from the project root still works.
 config_path = BASE_DIR / "config.json"
-with open(config_path, "r") as f:
-    config = json.load(f)
+if not config_path.exists():
+    raise FileNotFoundError(
+        f"Config file not found at {config_path}. Ensure discordbot/config.json exists and is readable."
+    )
+try:
+    config_raw = config_path.read_text(encoding="utf-8")
+except Exception as exc:
+    raise RuntimeError(
+        f"Failed to read config file at {config_path}: {exc}"
+    ) from exc
+
+if config_raw.lstrip().startswith("$ANSIBLE_VAULT"):
+    raise RuntimeError(
+        "Config file appears to be Ansible Vault encrypted. "
+        "Decrypt discordbot/config.json before starting the bot."
+    )
+
+try:
+    config = json.loads(config_raw)
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        f"Config file is not valid JSON ({config_path}): {exc}"
+    ) from exc
 
 # ---- Multi-token resolution ----
 # Priority order:
