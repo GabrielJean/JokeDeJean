@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'config.json'))
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     _config = json.load(f)
-_tts_instructions = _config["tts_default_instructions"]
+_tts_instructions = _config.get("tts_default_instructions", "")
 
 _DEFAULTS: Dict[str, Any] = {
     "tts_instructions": _tts_instructions
