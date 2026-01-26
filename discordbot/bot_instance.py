@@ -31,7 +31,7 @@ else:
 config["token"] = selected_token
 
 # API key override (xAI only)
-config["xai_api_key"] = os.getenv("XAI_API_KEY") or config["xai_api_key"]
+config["xai_api_key"] = os.getenv("XAI_API_KEY") or config.get("xai_api_key")
 
 # Per-profile logging (so two processes don't fight over same file) — store under package data dir
 profile_safe = (profile or "single").lower()
