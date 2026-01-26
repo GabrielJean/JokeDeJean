@@ -45,6 +45,7 @@ class ChildProcess:
     def start(self):
         env = os.environ.copy()
         env["COMMAND_PROFILE"] = self.profile
+        env.setdefault("PYTHONUNBUFFERED", "1")
         # Ensure we run module form for package-safe imports
         cmd = [PYTHON, "-m", "discordbot.main"]
         self.proc = subprocess.Popen(
@@ -60,6 +61,12 @@ class ChildProcess:
         self.stderr_thread = threading.Thread(target=self._pump, args=(self.proc.stderr, True), daemon=True)
         self.stdout_thread.start()
         self.stderr_thread.start()
+
+    def is_pumping(self) -> bool:
+        return bool(
+            (self.stdout_thread and self.stdout_thread.is_alive())
+            or (self.stderr_thread and self.stderr_thread.is_alive())
+        )
 
     def _pump(self, stream, is_err: bool):
         prefix = f"[{self.profile}:{'ERR' if is_err else 'OUT'}]"
@@ -135,6 +142,22 @@ def main():
                         print(f"[launcher] Profile '{c.profile}' exited with code {c.poll()}")
                         c.alive = False
             if all_dead:
+                # Final flush of any remaining output from queues/threads
+                flush_deadline = time.time() + 2.0
+                while time.time() < flush_deadline:
+                    drained_any = False
+                    for c in children:
+                        while True:
+                            try:
+                                line = c.queue.get_nowait()
+                            except queue.Empty:
+                                break
+                            else:
+                                drained_any = True
+                                sys.stdout.write(line)
+                    if not drained_any and not any(c.is_pumping() for c in children):
+                        break
+                    time.sleep(0.05)
                 print("[launcher] All child processes have exited. Launcher stopping.")
                 break
             time.sleep(0.5)
