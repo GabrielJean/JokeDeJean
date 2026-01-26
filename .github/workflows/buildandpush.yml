@@ -25,6 +25,24 @@ jobs:
           username: ${{ secrets.GITEA_REGISTRY_USER }}
           password: ${{ secrets.GITEA_REGISTRY_PASS }}
 
+      - name: Install Ansible (for vault decrypt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Decrypt config.json with Ansible Vault
+        env:
+          VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VAULT_PASSWORD:-}" ]; then
+            echo "ANSIBLE_VAULT_PASSWORD is not set" >&2
+            exit 1
+          fi
+          printf '%s' "$VAULT_PASSWORD" > /tmp/vault-pass
+          ansible-vault decrypt discordbot/config.json --vault-password-file /tmp/vault-pass
+          rm -f /tmp/vault-pass
+
       - name: Build and push image, capture digest
         id: build
         uses: docker/build-push-action@v6
