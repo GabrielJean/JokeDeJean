@@ -55,6 +55,16 @@ def _extract_response_text(response) -> str:
             return "\n".join(parts).strip()
     return ""
 
+
+def _cfg_float(cfg: dict, key: str, default: float) -> float:
+    try:
+        val = cfg.get(key, default)
+        if val is None:
+            return float(default)
+        return float(val)
+    except Exception:
+        return float(default)
+
 def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
                  frequency_penalty: float, presence_penalty: float):
     """Call chat.sample with best-effort support for optional parameters."""
@@ -67,6 +77,13 @@ def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
             "presence_penalty": presence_penalty,
         },
         {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+            "frequencyPenalty": frequency_penalty,
+            "presencePenalty": presence_penalty,
+        },
+        {
             "max_output_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
@@ -74,9 +91,28 @@ def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
             "presence_penalty": presence_penalty,
         },
         {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+            "frequencyPenalty": frequency_penalty,
+            "presencePenalty": presence_penalty,
+        },
+        {
+            "maxOutputTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+            "frequencyPenalty": frequency_penalty,
+            "presencePenalty": presence_penalty,
+        },
+        {
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
+        },
+        {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
         },
         {
             "max_output_tokens": max_tokens,
@@ -84,15 +120,30 @@ def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
             "top_p": top_p,
         },
         {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+        {
+            "maxOutputTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+        {
             "max_tokens": max_tokens,
             "temperature": temperature,
         },
         {
             "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        },
+        {
+            "maxOutputTokens": max_tokens,
             "temperature": temperature,
         },
         {"max_tokens": max_tokens},
         {"max_output_tokens": max_tokens},
+        {"maxOutputTokens": max_tokens},
         {},
     ]
     last_type_error = None
@@ -108,14 +159,14 @@ def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
 
 def run_gpt(query, system_prompt=None, max_tokens=400):
     cfg = get_config()
-    deployment = cfg["gpt_model"]
-    prompts = cfg["prompts"]
-    default_system = prompts["bot_system_prompt"]
-    diversity_instruction = cfg["gpt_diversity_instruction"]
-    temperature = float(cfg["gpt_temperature"])
-    top_p = float(cfg["gpt_top_p"])
-    frequency_penalty = float(cfg["gpt_frequency_penalty"])
-    presence_penalty = float(cfg["gpt_presence_penalty"])
+    deployment = cfg.get("gpt_model") or "grok-4"
+    prompts = cfg.get("prompts") or {}
+    default_system = prompts.get("bot_system_prompt") or ""
+    diversity_instruction = cfg.get("gpt_diversity_instruction") or ""
+    temperature = _cfg_float(cfg, "gpt_temperature", 0.7)
+    top_p = _cfg_float(cfg, "gpt_top_p", 1.0)
+    frequency_penalty = _cfg_float(cfg, "gpt_frequency_penalty", 0.0)
+    presence_penalty = _cfg_float(cfg, "gpt_presence_penalty", 0.0)
     try:
         client = _get_client()
         chat = client.chat.create(model=deployment, store_messages=False)
