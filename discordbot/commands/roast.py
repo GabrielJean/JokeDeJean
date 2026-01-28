@@ -262,7 +262,7 @@ async def do_roast(interaction, cible_id, intensite, details, voice_channel: dis
         tts_text = display_text
     embed = discord.Embed(title=titre, description=display_text,
                           color=0xff8800 if intensite < 3 else 0xff0000)
-    message = await interaction.followup.send(embed=embed)
+    message = await interaction.followup.send(embed=embed, ephemeral=False)
     log_command(
         interaction.user, "roast",
         {

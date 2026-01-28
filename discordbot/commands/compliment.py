@@ -262,7 +262,7 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
         tts_text = display_text
     embed = discord.Embed(title=titre, description=display_text,
                           color=0x33cc66 if intensite < 3 else 0x00aa44)
-    message = await interaction.followup.send(embed=embed)
+    message = await interaction.followup.send(embed=embed, ephemeral=False)
     log_command(
         interaction.user, "compliment",
         {
