@@ -364,7 +364,7 @@ async def setup(bot):
             return
         level = 1 if intensite is None else max(1, min(3, int(intensite)))
         det = details.strip() if details else ""
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True, ephemeral=False)
         await do_roast(
             interaction,
             cible_id=cible.id,
