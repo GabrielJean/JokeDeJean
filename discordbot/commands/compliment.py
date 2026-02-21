@@ -248,7 +248,7 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
     try:
         texte = await asyncio.wait_for(
             loop.run_in_executor(
-                None, run_gpt, prompt_gpt, compliment_system_prompt, 250
+                None, lambda: run_gpt(prompt_gpt, compliment_system_prompt, 250, category="compliment")
             ),
             timeout=18
         )

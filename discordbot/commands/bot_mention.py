@@ -118,7 +118,7 @@ class BotMentionCog(commands.Cog):
             # Use SDK path directly (run_gpt handles both list and string input)
             # Keep replies short for mentions: ~250 completion tokens
             reply = await asyncio.wait_for(
-                loop.run_in_executor(None, run_gpt, messages, None, 250),
+                loop.run_in_executor(None, lambda: run_gpt(messages, None, 250, category="mention")),
                 timeout=30
             )
             reply = reply or "..."

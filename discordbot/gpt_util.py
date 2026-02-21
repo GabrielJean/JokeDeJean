@@ -1,4 +1,6 @@
 import logging
+import random
+from collections import defaultdict, deque
 from xai_sdk import Client
 try:
     from xai_sdk.chat import user, system, assistant
@@ -32,6 +34,45 @@ def _get_client():
             timeout=3600,
         )
     return _client
+
+
+# --- Diversity & anti-repetition engine ---
+
+_recent_outputs = defaultdict(lambda: deque(maxlen=8))
+
+def _build_diversity_block(cfg, category=None):
+    """Build a dynamic diversity instruction with generative angle/format seeds + anti-repeat."""
+    parts = []
+    base = cfg.get("gpt_diversity_instruction") or ""
+    angles = cfg.get("diversity_angles") or []
+    formats = cfg.get("diversity_formats") or []
+
+    if base:
+        parts.append(base)
+
+    # Pick 2-3 random examples as *inspiration seeds*, not as direct instructions
+    if angles or formats:
+        seed_examples = []
+        if angles:
+            seed_examples += random.sample(angles, min(2, len(angles)))
+        if formats:
+            seed_examples += random.sample(formats, min(1, len(formats)))
+        random.shuffle(seed_examples)
+        seeds_text = "\n".join(f"  - {s}" for s in seed_examples)
+        parts.append(
+            "CRÉATIVITÉ OBLIGATOIRE: invente un angle comique et une structure "
+            "COMPLÈTEMENT UNIQUES pour cette réponse. Ne réutilise JAMAIS un angle déjà fait. "
+            f"Voici des exemples d'inspiration (NE LES COPIE PAS, invente le tien):\n{seeds_text}"
+        )
+
+    if category and _recent_outputs[category]:
+        recent = list(_recent_outputs[category])[-5:]
+        avoid_lines = "\n".join(f"- «{r[:150]}»" for r in recent)
+        parts.append(
+            f"INTERDICTION DE RÉPÉTER ou reformuler ces réponses récentes:\n{avoid_lines}"
+        )
+
+    return "\n\n".join(parts) if parts else ""
 
 
 def _extract_response_text(response) -> str:
@@ -157,12 +198,12 @@ def _sample_chat(chat, max_tokens: int, *, temperature: float, top_p: float,
         raise last_type_error
     return chat.sample()
 
-def run_gpt(query, system_prompt=None, max_tokens=400):
+def run_gpt(query, system_prompt=None, max_tokens=400, *, category=None):
     cfg = get_config()
     deployment = cfg.get("gpt_model") or "grok-4"
     prompts = cfg.get("prompts") or {}
     default_system = prompts.get("bot_system_prompt") or ""
-    diversity_instruction = cfg.get("gpt_diversity_instruction") or ""
+    diversity_instruction = _build_diversity_block(cfg, category)
     temperature = _cfg_float(cfg, "gpt_temperature", 0.7)
     top_p = _cfg_float(cfg, "gpt_top_p", 1.0)
     frequency_penalty = _cfg_float(cfg, "gpt_frequency_penalty", 0.0)
@@ -213,6 +254,8 @@ def run_gpt(query, system_prompt=None, max_tokens=400):
         )
         text = _extract_response_text(response)
         if text:
+            if category:
+                _recent_outputs[category].append(text[:200])
             return text
         logging.error("Empty content from xAI response: %s", str(response)[:800])
         return "(aucune réponse)"
