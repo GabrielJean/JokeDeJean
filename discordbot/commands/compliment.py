@@ -5,14 +5,12 @@ import asyncio
 import os
 import json
 try:
-    from ..gpt_util import run_gpt  # type: ignore
-    from ..tts_util import run_tts  # type: ignore
+    from ..tts_util import run_voice_generation_tts  # type: ignore
     from ..audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
     from ..history import log_command  # type: ignore
     from ..guild_settings import get_tts_instructions_for  # type: ignore
 except ImportError:  # Script fallback
-    from gpt_util import run_gpt  # type: ignore
-    from tts_util import run_tts  # type: ignore
+    from tts_util import run_voice_generation_tts  # type: ignore
     from audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
     from history import log_command  # type: ignore
     from guild_settings import get_tts_instructions_for  # type: ignore
@@ -245,24 +243,51 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
     )
     titre = f"Compliment de {username} (niv. {intensite})"
     loop = asyncio.get_running_loop()
+    vc_channel = get_voice_channel(interaction, voice_channel)
+    instructions = get_tts_instructions_for(interaction.guild, "compliment", compliment_tts_fallback)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        filename = tmp.name
+
     try:
-        texte = await asyncio.wait_for(
+        success_tuple = await asyncio.wait_for(
             loop.run_in_executor(
-                None, lambda: run_gpt(prompt_gpt, compliment_system_prompt, 250, category="compliment")
+                None,
+                run_voice_generation_tts,
+                prompt_gpt,
+                compliment_system_prompt,
+                filename,
+                instructions,
+                "Leo",
             ),
-            timeout=18
+            timeout=30
         )
     except Exception as ex:
         await interaction.followup.send(f"Erreur génération compliment: {ex}", ephemeral=True)
+        try:
+            os.remove(filename)
+        except Exception:
+            pass
         return
-    tts_text = (texte or "").strip()
-    display_text = tts_text
+
+    success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
+    spoken_text = ""
+    if isinstance(success_tuple, tuple) and len(success_tuple) > 1:
+        spoken_text = (success_tuple[1] or "").strip()
+    if not success:
+        await interaction.followup.send("Erreur lors de la génération voice API.", ephemeral=True)
+        try:
+            os.remove(filename)
+        except Exception:
+            pass
+        return
+
+    display_text = spoken_text or "(aucune transcription)"
     if len(display_text) > 4096:
         display_text = display_text[:4096]
-        tts_text = display_text
+
     embed = discord.Embed(title=titre, description=display_text,
                           color=0x33cc66 if intensite < 3 else 0x00aa44)
-    message = await interaction.followup.send(embed=embed, ephemeral=False)
+    await interaction.followup.send(embed=embed, ephemeral=False)
     log_command(
         interaction.user, "compliment",
         {
@@ -273,43 +298,25 @@ async def do_compliment(interaction, cible_id, intensite, details, voice_channel
         },
         guild=interaction.guild
     )
-    # Vocal
-    vc_channel = get_voice_channel(interaction, voice_channel)
+
     if vc_channel:
-        instructions = get_tts_instructions_for(interaction.guild, "compliment", compliment_tts_fallback)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            filename = tmp.name
         try:
-            success_tuple = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, tts_text, filename, instructions),
-                timeout=20
+            asyncio.create_task(play_audio_and_cleanup(interaction, filename, vc_channel))
+            view = StopPlaybackView(interaction.guild.id, interaction.user.id)
+            await interaction.followup.send(
+                "Compliment balancé au vocal!", ephemeral=True, view=view
             )
-            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
-            spoken_text = ""
-            if isinstance(success_tuple, tuple) and len(success_tuple) > 1:
-                spoken_text = (success_tuple[1] or "").strip()
-            if success:
-                if spoken_text and spoken_text != display_text:
-                    new_display = spoken_text[:4096]
-                    new_embed = discord.Embed(
-                        title=titre,
-                        description=new_display,
-                        color=0x33cc66 if intensite < 3 else 0x00aa44
-                    )
-                    try:
-                        await message.edit(embed=new_embed)
-                    except Exception:
-                        pass
-                asyncio.create_task(play_audio_and_cleanup(interaction, filename, vc_channel))
-                view = StopPlaybackView(interaction.guild.id, interaction.user.id)
-                await interaction.followup.send(
-                    "Compliment balancé au vocal!", ephemeral=True, view=view
-                )
-            else:
-                await interaction.followup.send("Erreur lors de la génération audio TTS.", ephemeral=True)
         except Exception:
+            try:
+                os.remove(filename)
+            except Exception:
+                pass
             await interaction.followup.send("Erreur lors de la génération ou la lecture audio.", ephemeral=True)
     else:
+        try:
+            os.remove(filename)
+        except Exception:
+            pass
         await interaction.followup.send("(Rejoins ou précise un salon vocal !)", ephemeral=True)
 
 # --- Command registration ---

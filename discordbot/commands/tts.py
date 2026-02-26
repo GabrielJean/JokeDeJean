@@ -129,13 +129,13 @@ async def setup(bot):
         instructions: str = None,
         voice_channel: discord.VoiceChannel = None
     ):
-        # Si aucun paramètre fourni, on utilise l'UI (Modal) existante
+        from ..tts_util import run_voice_verbatim_tts
         if not message or not message.strip():
             await interaction.response.send_modal(SayVCModal())
             return
 
         # Exécution directe avec paramètres
-        msg = message.strip()
+        from tts_util import run_voice_verbatim_tts  # type: ignore
         instr = instructions.strip() if instructions else None
         log_command(
             interaction.user, "say_vc",
@@ -159,11 +159,10 @@ async def setup(bot):
             filename = tmp.name
         try:
             style = instr or get_tts_instructions_for(interaction.guild, "say_vc", say_vc_tts_fallback)
-            success_tuple = await asyncio.wait_for(
-                loop.run_in_executor(None, run_tts, msg, filename, style),
-                timeout=20
+            success = await asyncio.wait_for(
+                loop.run_in_executor(None, run_voice_verbatim_tts, msg, filename, style, "Leo", 16000),
+                timeout=25
             )
-            success = success_tuple[0] if isinstance(success_tuple, tuple) else success_tuple
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
@@ -174,11 +173,10 @@ async def setup(bot):
             await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
 
     @bot.tree.command(
-        name="skip",
-        description="Passe au prochain message TTS en vocal (skip la lecture actuelle)"
-    )
+            success = await asyncio.wait_for(
+                loop.run_in_executor(None, run_voice_verbatim_tts, msg, filename, style, "Leo", 16000),
+                timeout=25
     @app_commands.describe(
-        voice_channel="Salon vocal cible (optionnel, sinon celui où vous êtes actuellement)"
     )
     async def skip_tts(
         interaction: discord.Interaction,
