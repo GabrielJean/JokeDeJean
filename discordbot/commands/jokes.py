@@ -4,6 +4,7 @@ import os
 import random
 import tempfile
 import asyncio
+import logging
 from pathlib import Path
 try:
     from ..tts_util import run_tts
@@ -19,6 +20,18 @@ except ImportError:  # fallback when run as script from project root
 BASE_DIR = Path(__file__).resolve().parent.parent
 AUDIO_DIR = BASE_DIR / "Audio"
 audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")] if AUDIO_DIR.exists() else []
+logger = logging.getLogger(__name__)
+
+
+async def _play_audio_background(interaction: discord.Interaction, file_path: str, vc_channel: discord.VoiceChannel):
+    try:
+        await play_audio(interaction, file_path, vc_channel)
+    except Exception as exc:
+        logger.exception("Background joke playback failed")
+        try:
+            await interaction.followup.send(f"Lecture vocale impossible: {exc}", ephemeral=True)
+        except Exception:
+            pass
 
 async def setup(bot):
     @bot.tree.command(name="joke", description="Blague Reddit en vocal")
@@ -56,7 +69,7 @@ async def setup(bot):
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
             # Don't delete here — queue the playback.
-            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            asyncio.create_task(_play_audio_background(interaction, filename, vc_channel))
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
@@ -72,7 +85,7 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal, ou préciser un vocal !", ephemeral=True)
             return
         try:
-            asyncio.create_task(play_audio(interaction, os.path.join(str(AUDIO_DIR), file), vc_channel))
+            asyncio.create_task(_play_audio_background(interaction, os.path.join(str(AUDIO_DIR), file), vc_channel))
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception:
             await interaction.followup.send("Erreur pendant la lecture !", ephemeral=True)

@@ -218,10 +218,14 @@ class RoastSetupView(discord.ui.View):
 async def play_audio_and_cleanup(interaction, filename, vc_channel):
     try:
         await play_audio(interaction, filename, vc_channel)
-    except Exception:
+    except Exception as exc:
         # Keep this task from bubbling exceptions as "Task exception was never retrieved".
         # Temp-file cleanup is handled by audio_player for temp paths.
         logger.exception("Roast voice playback failed")
+        try:
+            await interaction.followup.send(f"Lecture vocale impossible: {exc}", ephemeral=True)
+        except Exception:
+            pass
 
 # --- Main roast logic ---
 

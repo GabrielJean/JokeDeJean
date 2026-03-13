@@ -1,6 +1,7 @@
 # discord.py
 git+https://github.com/Rapptz/discord.py.git
 PyNaCl
+davey
 requests
 yt_dlp
 xai-sdk
