@@ -4,6 +4,7 @@ import os
 import random
 import tempfile
 import asyncio
+import logging
 from pathlib import Path
 try:
     from ..tts_util import run_tts
@@ -19,6 +20,27 @@ except ImportError:  # fallback when run as script from project root
 BASE_DIR = Path(__file__).resolve().parent.parent
 AUDIO_DIR = BASE_DIR / "Audio"
 audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith(".mp3")] if AUDIO_DIR.exists() else []
+VOICE_BACKEND_MISSING = "davey library needed in order to use voice"
+
+
+def _is_missing_voice_backend(exc: Exception) -> bool:
+    return isinstance(exc, RuntimeError) and VOICE_BACKEND_MISSING in str(exc)
+
+
+async def _play_audio_safe(interaction: discord.Interaction, audio_path: str, vc_channel: discord.VoiceChannel):
+    try:
+        await play_audio(interaction, audio_path, vc_channel)
+    except Exception as exc:
+        if _is_missing_voice_backend(exc):
+            try:
+                await interaction.followup.send(
+                    "Lecture vocale indisponible sur cette instance (dependance `davey` manquante).",
+                    ephemeral=True,
+                )
+            except Exception:
+                logging.warning("Voice unavailable: missing davey runtime dependency.")
+            return
+        logging.exception("Background joke playback failed: %s", exc)
 
 async def setup(bot):
     @bot.tree.command(name="joke", description="Blague Reddit en vocal")
@@ -56,7 +78,7 @@ async def setup(bot):
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
             # Don't delete here — queue the playback.
-            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            asyncio.create_task(_play_audio_safe(interaction, filename, vc_channel))
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"Erreur : {exc}", ephemeral=True)
@@ -72,7 +94,7 @@ async def setup(bot):
             await interaction.followup.send("Vous devez être dans un salon vocal, ou préciser un vocal !", ephemeral=True)
             return
         try:
-            asyncio.create_task(play_audio(interaction, os.path.join(str(AUDIO_DIR), file), vc_channel))
+            asyncio.create_task(_play_audio_safe(interaction, os.path.join(str(AUDIO_DIR), file), vc_channel))
             await interaction.followup.send("Lecture audio lancée dans le salon vocal.", ephemeral=True)
         except Exception:
             await interaction.followup.send("Erreur pendant la lecture !", ephemeral=True)

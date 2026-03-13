@@ -4,6 +4,7 @@ import tempfile
 import asyncio
 import os
 import json
+import logging
 try:
     from ..gpt_util import run_gpt  # type: ignore
     from ..tts_util import run_tts  # type: ignore
@@ -29,6 +30,11 @@ roast_tts_fallback = (
 )
 _raw_roast_intensity = config["intensity_labels"]["roast"]
 roast_intensity_labels = {int(key): value for key, value in _raw_roast_intensity.items()}
+VOICE_BACKEND_MISSING = "davey library needed in order to use voice"
+
+
+def _is_missing_voice_backend(exc: Exception) -> bool:
+    return isinstance(exc, RuntimeError) and VOICE_BACKEND_MISSING in str(exc)
 
 
 
@@ -217,6 +223,17 @@ class RoastSetupView(discord.ui.View):
 async def play_audio_and_cleanup(interaction, filename, vc_channel):
     try:
         await play_audio(interaction, filename, vc_channel)
+    except Exception as exc:
+        if _is_missing_voice_backend(exc):
+            try:
+                await interaction.followup.send(
+                    "Lecture vocale indisponible sur cette instance (dependance `davey` manquante).",
+                    ephemeral=True,
+                )
+            except Exception:
+                logging.warning("Voice unavailable: missing davey runtime dependency.")
+        else:
+            logging.exception("Roast audio playback failed: %s", exc)
     finally:
         try:
             os.remove(filename)

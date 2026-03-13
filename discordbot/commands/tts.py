@@ -4,6 +4,7 @@ import tempfile
 import asyncio
 import json
 import os
+import logging
 try:
     from ..tts_util import run_tts
     from ..audio_player import play_audio, get_voice_channel, skip_audio
@@ -21,6 +22,27 @@ with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
 say_vc_tts_fallback = config["tts_default_instructions"]
+VOICE_BACKEND_MISSING = "davey library needed in order to use voice"
+
+
+def _is_missing_voice_backend(exc: Exception) -> bool:
+    return isinstance(exc, RuntimeError) and VOICE_BACKEND_MISSING in str(exc)
+
+
+async def _play_audio_safe(interaction: discord.Interaction, filename: str, vc_channel: discord.VoiceChannel):
+    try:
+        await play_audio(interaction, filename, vc_channel)
+    except Exception as exc:
+        if _is_missing_voice_backend(exc):
+            try:
+                await interaction.followup.send(
+                    "Lecture vocale indisponible sur cette instance (dependance `davey` manquante).",
+                    ephemeral=True,
+                )
+            except Exception:
+                logging.warning("Voice unavailable: missing davey runtime dependency.")
+            return
+        logging.exception("Background TTS playback failed: %s", exc)
 
 
 def build_safe_tts_embed(message: str, instructions: str, display_name: str):
@@ -107,7 +129,7 @@ class SayVCModal(discord.ui.Modal, title="Lire un message dans un salon vocal"):
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
-            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            asyncio.create_task(_play_audio_safe(interaction, filename, vc_channel))
             embed = build_safe_tts_embed(msg, instr, interaction.user.display_name)
             await interaction.followup.send(embed=embed, ephemeral=False)
         except Exception as exc:
@@ -167,7 +189,7 @@ async def setup(bot):
             if not success:
                 await interaction.followup.send("Erreur lors de la génération de la synthèse vocale.", ephemeral=True)
                 return
-            asyncio.create_task(play_audio(interaction, filename, vc_channel))
+            asyncio.create_task(_play_audio_safe(interaction, filename, vc_channel))
             embed = build_safe_tts_embed(msg, instr, interaction.user.display_name)
             await interaction.followup.send(embed=embed, ephemeral=False)
         except Exception as exc:

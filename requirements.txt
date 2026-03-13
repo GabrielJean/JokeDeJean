@@ -1,5 +1,6 @@
 # discord.py
 git+https://github.com/Rapptz/discord.py.git
+davey
 PyNaCl
 requests
 yt_dlp

@@ -68,6 +68,7 @@ Future enhancements (easy to add later): auto-restart flags, health pings, unifi
 ## Requirements
 - Python 3.9 or higher
 - **discord.py** ≥ 2.3
+- `davey` (required by current discord.py voice backend)
 - Python modules: `discord`, `discord.ext`, `requests`
 - A configuration file `config.json` in the format:
     ```json
@@ -85,7 +86,7 @@ Future enhancements (easy to add later): auto-restart flags, health pings, unifi
 ## Installation
 1. **Install dependencies**
     ```
-    pip install discord.py requests
+    pip install -r requirements.txt
     ```
 2. **Create `config.json`** (see above)
 3. **Add MP3 assets** to `./Audio`
