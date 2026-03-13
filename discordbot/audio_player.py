@@ -254,6 +254,9 @@ async def _process_audio_item(guild, gid, item):
         progress_msg, seek_view
     ) = item
     vc = None
+    # Discord voice can briefly report not-playing right after vc.play().
+    # Give a short grace window before considering playback finished.
+    startup_not_playing_checks = 0
     try:
         vc = discord.utils.get(bot.voice_clients, guild=guild)
         if not vc or not vc.is_connected():
@@ -363,6 +366,7 @@ async def _process_audio_item(guild, gid, item):
             audio_source = start_play()
             try:
                 vc.play(audio_source)
+                startup_not_playing_checks = 0
             except discord.errors.ClientException as e:
                 logging.exception("VC play() failed: %s", e)
                 if not fut.done():
@@ -418,7 +422,12 @@ async def _process_audio_item(guild, gid, item):
                         # If we can't create the new source, continue with the original logic
                         pass
                 if not vc.is_playing():
+                    if startup_not_playing_checks < 8:
+                        startup_not_playing_checks += 1
+                        await asyncio.sleep(0.25)
+                        continue
                     break
+                startup_not_playing_checks = 0
                 await asyncio.sleep(0.5)
             t = _progress_tasks.get(gid)
             if t: t.cancel()

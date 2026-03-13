@@ -4,6 +4,7 @@ import tempfile
 import asyncio
 import os
 import json
+import logging
 try:
     from ..tts_util import run_voice_generation_tts  # type: ignore
     from ..audio_player import play_audio, get_voice_channel, skip_audio_by_guild  # type: ignore
@@ -27,6 +28,8 @@ roast_tts_fallback = (
 )
 _raw_roast_intensity = config["intensity_labels"]["roast"]
 roast_intensity_labels = {int(key): value for key, value in _raw_roast_intensity.items()}
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -215,11 +218,10 @@ class RoastSetupView(discord.ui.View):
 async def play_audio_and_cleanup(interaction, filename, vc_channel):
     try:
         await play_audio(interaction, filename, vc_channel)
-    finally:
-        try:
-            os.remove(filename)
-        except Exception:
-            pass
+    except Exception:
+        # Keep this task from bubbling exceptions as "Task exception was never retrieved".
+        # Temp-file cleanup is handled by audio_player for temp paths.
+        logger.exception("Roast voice playback failed")
 
 # --- Main roast logic ---
 
